@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Мінімальний набір дозволів оболонки: вікно, нативні діалоги, показ файлу в Провіднику/Finder. Жодного доступу до ФС, шелу чи HTTP з фронтенду — усе це йде через локальний HTTP API.",
+  "windows": ["main", "splash"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-close",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "dialog:allow-confirm",
+    "opener:allow-reveal-item-in-dir"
+  ]
+}

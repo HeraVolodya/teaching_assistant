@@ -1,0 +1,92 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Asistent",
+  "version": "0.1.0",
+  "identifier": "ua.gov.nasv.asistent",
+  "build": {
+    "beforeDevCommand": "npm --prefix ../frontend run dev",
+    "beforeBuildCommand": "npm --prefix ../frontend run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../frontend/dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "splash",
+        "title": "Асістент — запуск",
+        "url": "splash.html",
+        "width": 460,
+        "height": 260,
+        "resizable": false,
+        "decorations": false,
+        "center": true,
+        "alwaysOnTop": true,
+        "visible": true
+      },
+      {
+        "label": "main",
+        "title": "Асістент",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 1024,
+        "minHeight": 680,
+        "center": true,
+        "visible": false,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:* http://localhost:*",
+      "assetProtocol": {
+        "enable": false,
+        "scope": []
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "dmg", "app"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Education",
+    "shortDescription": "Локальний AI-асистент викладача",
+    "longDescription": "Асістент — повністю локальний AI-помічник викладача: приймання навчальних матеріалів, гібридний пошук і відповіді з покликанням на конкретні сторінки. Жодних хмарних сервісів.",
+    "copyright": "© 2026 Національна академія сухопутних військ, Інститут РВіА",
+    "resources": {
+      "resources/runtime": "runtime",
+      "resources/models": "models"
+    },
+    "createUpdaterArtifacts": false,
+    "windows": {
+      "webviewInstallMode": {
+        "type": "offlineInstaller"
+      },
+      "allowDowngrades": false,
+      "nsis": {
+        "installMode": "perUser",
+        "languages": ["Ukrainian", "English"],
+        "displayLanguageSelector": false,
+        "installerHooks": "nsis/hooks.nsh",
+        "compression": "lzma",
+        "startMenuFolder": "Асістент"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "hardenedRuntime": true,
+      "entitlements": "entitlements.plist",
+      "dmg": {
+        "appPosition": { "x": 180, "y": 190 },
+        "applicationFolderPosition": { "x": 480, "y": 190 },
+        "windowSize": { "width": 660, "height": 400 }
+      }
+    }
+  },
+  "plugins": {}
+}

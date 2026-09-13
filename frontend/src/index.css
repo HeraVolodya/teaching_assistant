@@ -1,0 +1,174 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Масштаб інтерфейсу. На 125% і 150% DPI Windows сам множить CSS-пікселі, тому
+ * фіксовані висоти в px ламаються першими — усюди нижче використовуються
+ * rem і min-height, а не height. --ui-scale — це ДОДАТКОВИЙ множник із
+ * налаштувань («розмір шрифту»), поверх системного DPI.
+ */
+:root {
+  --ui-scale: 1;
+
+  --bg: 220 20% 97%;
+  --surface: 0 0% 100%;
+  --raised: 220 20% 99%;
+  --line: 220 14% 88%;
+  --ink: 222 30% 14%;
+  --muted: 220 10% 44%;
+  --accent: 231 60% 52%;
+  --accent-ink: 0 0% 100%;
+  --ok: 152 52% 36%;
+  --warn: 38 92% 44%;
+  --danger: 0 68% 48%;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: 224 18% 10%;
+  --surface: 224 16% 13%;
+  --raised: 224 16% 16%;
+  --line: 224 12% 24%;
+  --ink: 220 22% 92%;
+  --muted: 220 10% 62%;
+  --accent: 231 70% 66%;
+  --accent-ink: 224 30% 10%;
+  --ok: 152 45% 50%;
+  --warn: 38 88% 58%;
+  --danger: 0 72% 62%;
+
+  color-scheme: dark;
+}
+
+html {
+  font-size: calc(16px * var(--ui-scale));
+}
+
+body {
+  margin: 0;
+  background: hsl(var(--bg));
+  color: hsl(var(--ink));
+  font-size: 0.875rem;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* Прибирає «стрибок» смуги прокрутки при відкритті модалок Radix. */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+*:focus-visible {
+  outline: 2px solid hsl(var(--accent));
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: hsl(var(--accent) / 0.28);
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-line bg-surface;
+  }
+  .subtle {
+    @apply text-muted;
+  }
+  /* Смуга прокрутки, що не з'їдає 15px на Windows. */
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--line)) transparent;
+  }
+  .scroll-thin::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--line));
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+/* ---------------------------------------------------------------- pdf.js */
+/* Мінімальний набір із pdf_viewer.css: повний файл тягне тему й іконки
+   вбудованого переглядача, яких ми не показуємо. Текстовий шар МАЄ лишатись
+   прозорим і вибірним — саме він робить цитату перевірюваною. */
+.pdfViewer .page {
+  position: relative;
+  margin: 0 auto 12px;
+  background: white;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.22);
+}
+.pdfViewer .canvasWrapper {
+  overflow: hidden;
+}
+.textLayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  opacity: 1;
+  z-index: 2;
+}
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+.textLayer ::selection {
+  background: hsl(var(--accent) / 0.4);
+}
+.hiddenCanvasElement {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* Оверлей підсвітки фрагмента — над canvas, ПІД текстовим шаром,
+   щоб не заважати виділенню тексту мишею. */
+.asistent-highlight-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.asistent-highlight {
+  position: absolute;
+  background: hsl(48 100% 50% / 0.32);
+  border: 1px solid hsl(38 92% 44% / 0.75);
+  border-radius: 2px;
+  box-shadow: 0 0 0 3px hsl(48 100% 50% / 0.14);
+  animation: asistent-pulse 1.6s ease-out 2;
+}
+@keyframes asistent-pulse {
+  0% {
+    background: hsl(48 100% 50% / 0.6);
+  }
+  100% {
+    background: hsl(48 100% 50% / 0.32);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

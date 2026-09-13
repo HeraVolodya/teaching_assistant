@@ -1,0 +1,47 @@
+[package]
+name = "asistent"
+version = "0.1.0"
+description = "Асістент — локальний AI-асистент викладача"
+authors = ["НАСВ, Інститут РВіА"]
+edition = "2021"
+rust-version = "1.77"
+# Публікація в crates.io виключена: це кінцевий застосунок закритого контуру.
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.5", features = [] }
+# Нативні діалоги вибору файлів/тек і «показати в Провіднику/Finder» — це
+# ЄДИНІ нативні можливості, якими володіє оболонка. Уся бізнес-логіка живе
+# за локальним HTTP API (див. план, §0: інваріант, цінніший за вибір Tauri).
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Job Object — це і є kill-on-exit на Windows. Прямий виклик Win32 замість
+# tauri-plugin-shell: плагін задокументовано не вбиває дерево процесів
+# (tauri#11686), а Python-рантайм може породити воркери.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+# На Unix те саме дає група процесів: setpgid(0,0) у дитини + killpg(-pgid).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[features]
+# Стандартна фіча Tauri: увімкнена в release-збірках CLI автоматично.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
