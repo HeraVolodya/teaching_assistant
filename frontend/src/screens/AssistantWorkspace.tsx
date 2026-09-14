@@ -13,11 +13,16 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 
-import { createSession } from "@/api/endpoints";
 import { ChatView } from "@/components/chat/ChatView";
 import { QueueBanner } from "@/components/QueueBanner";
 import { Badge } from "@/components/ui/Primitives";
-import { useAssistant, useSessions } from "@/hooks/queries";
+import {
+  useAssistant,
+  useClearMessages,
+  useCreateSession,
+  useDeleteSession,
+  useSessions,
+} from "@/hooks/queries";
 import { cn } from "@/lib/cn";
 import { AssistantEditor } from "@/screens/AssistantEditor";
 import { DocumentsScreen } from "@/screens/DocumentsScreen";
@@ -106,27 +111,59 @@ function ChatTab({ assistantId }: { assistantId: string }) {
   const { data: sessions, isLoading } = useSessions(assistantId);
   const [sessionId, setSessionId] = useState<string | undefined>();
   const [creating, setCreating] = useState(false);
+  const create = useCreateSession(assistantId);
+  const clear = useClearMessages(assistantId);
+  const remove = useDeleteSession(assistantId);
 
   useEffect(() => {
-    if (isLoading || sessionId || creating) return;
+    if (isLoading || creating) return;
+    // Вибрана розмова могла щойно зникнути — її видалили в панелі історії.
+    // Без цієї перевірки `sessionId` вказував би на неіснуючий рядок, і
+    // `useMessages` отримав би 404 замість того, щоб перемкнутись на сусідню.
+    const alive = sessionId && sessions?.some((session) => session.id === sessionId);
+    if (alive) return;
+
     const latest = sessions?.[0];
     if (latest) {
       setSessionId(latest.id);
       return;
     }
     setCreating(true);
-    void createSession(assistantId)
+    create
+      .mutateAsync()
       .then((session) => setSessionId(session.id))
+      .catch(() => undefined)
       .finally(() => setCreating(false));
+    // `create` навмисно поза залежностями: мутація react-query міняє
+    // ідентичність на кожен рендер, і цикл «створив → ререндер → створив»
+    // народжував би порожні розмови нескінченно.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assistantId, sessions, isLoading, sessionId, creating]);
 
   const startNew = () => {
     setSessionId(undefined);
     setCreating(true);
-    void createSession(assistantId)
+    create
+      .mutateAsync()
       .then((session) => setSessionId(session.id))
+      .catch(() => undefined)
       .finally(() => setCreating(false));
   };
 
-  return <ChatView sessionId={sessionId} onNewSession={startNew} />;
+  return (
+    <ChatView
+      sessionId={sessionId}
+      onNewSession={startNew}
+      sessions={sessions ?? []}
+      onPickSession={setSessionId}
+      onClearSession={(id) => void clear.mutate(id)}
+      onDeleteSession={(id) => {
+        // Скидаємо вибір ДО мутації: інакше між видаленням і оновленням
+        // списку `useMessages` встиг би сходити за повідомленнями видаленої
+        // розмови. Наступний прохід ефекту вибере сусідню або створить нову.
+        if (id === sessionId) setSessionId(undefined);
+        remove.mutate(id);
+      }}
+    />
+  );
 }

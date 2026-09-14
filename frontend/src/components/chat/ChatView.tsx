@@ -18,7 +18,9 @@
 import {
   ClipboardCheck,
   Copy,
+  Eraser,
   FileSearch,
+  History,
   MessageSquarePlus,
   RefreshCw,
   Search,
@@ -31,24 +33,44 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { ChatMessage, CitationDto } from "@/api/types";
+import type { ChatMessage, ChatSession, CitationDto } from "@/api/types";
 import { AnswerText } from "@/components/chat/AnswerText";
+import { SessionList } from "@/components/chat/SessionList";
 import { WhyPanel } from "@/components/chat/WhyPanel";
 import { Button, IconButton, Spinner } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Overlays";
 import { Badge, Banner, EmptyState, Textarea } from "@/components/ui/Primitives";
 import { useFeedback, useMessages } from "@/hooks/queries";
 import { useChat, type LiveTurn } from "@/hooks/useChat";
 import { cn } from "@/lib/cn";
 import { describeError } from "@/lib/errors";
 import { SOURCES, formatNumber, pluralize } from "@/lib/format";
+import { toPlainText } from "@/lib/markdown";
 import { useUi } from "@/lib/store";
 
-export function ChatView({ sessionId, onNewSession }: { sessionId: string | undefined; onNewSession: () => void }) {
+export function ChatView({
+  sessionId,
+  onNewSession,
+  sessions = [],
+  onPickSession,
+  onDeleteSession,
+  onClearSession,
+}: {
+  sessionId: string | undefined;
+  onNewSession: () => void;
+  /** Розмови асистента для панелі історії. Порожній масив — панель порожня. */
+  sessions?: ChatSession[];
+  onPickSession?: (sessionId: string) => void;
+  onDeleteSession?: (sessionId: string) => void;
+  onClearSession?: (sessionId: string) => void;
+}) {
   const { t } = useTranslation();
   const { data: history = [] } = useMessages(sessionId);
   const { live, busy, ask, stop } = useChat(sessionId);
   const [draft, setDraft] = useState("");
   const [whyFor, setWhyFor] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
 
@@ -71,7 +93,8 @@ export function ChatView({ sessionId, onNewSession }: { sessionId: string | unde
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       <div
         className="scroll-thin min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6"
         onScroll={(event) => {
@@ -107,6 +130,24 @@ export function ChatView({ sessionId, onNewSession }: { sessionId: string | unde
           <IconButton title={t("chat.newChat")} onClick={onNewSession}>
             <MessageSquarePlus size={17} />
           </IconButton>
+          <IconButton
+            title={t("chat.history")}
+            active={historyOpen}
+            onClick={() => setHistoryOpen((open) => !open)}
+          >
+            <History size={17} />
+          </IconButton>
+          {/*
+            Очищення доступне лише тоді, коли є що очищати: кнопка над
+            порожньою розмовою нічого не робить, але виглядає як робоча.
+          */}
+          <IconButton
+            title={t("chat.clearTitle")}
+            onClick={() => setClearing(true)}
+            disabled={!sessionId || !history.length || busy}
+          >
+            <Eraser size={17} />
+          </IconButton>
           <Textarea
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
@@ -138,6 +179,43 @@ export function ChatView({ sessionId, onNewSession }: { sessionId: string | unde
       </div>
 
       <WhyPanel messageId={whyFor} open={Boolean(whyFor)} onOpenChange={(open) => !open && setWhyFor(null)} />
+
+      <Modal
+        open={clearing}
+        onOpenChange={setClearing}
+        title={t("chat.clearTitle")}
+        description={t("chat.clearWarning")}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setClearing(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (sessionId) onClearSession?.(sessionId);
+                setClearing(false);
+              }}
+            >
+              {t("chat.clear")}
+            </Button>
+          </>
+        }
+      />
+      </div>
+
+      {historyOpen ? (
+        <SessionList
+          sessions={sessions}
+          activeId={sessionId}
+          onPick={(id) => {
+            onPickSession?.(id);
+            setHistoryOpen(false);
+          }}
+          onDelete={(id) => onDeleteSession?.(id)}
+          onClose={() => setHistoryOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -204,7 +282,12 @@ function Answer({ message, onWhy }: { message: ChatMessage; onWhy: () => void })
   const [voted, setVoted] = useState<"up" | "down" | null>(null);
 
   const copy = async (mode: "plain" | "cited") => {
-    const text = mode === "plain" ? message.content.replace(/\s*\[\d{1,3}\]/g, "") : message.content;
+    // `toPlainText`, а не сирий `message.content`: відколи відповідь
+    // рендериться розміткою, видиме й скопійоване розійшлися б — на екрані
+    // жирний заголовок, у буфері `**заголовок**`. Викладач вставляє це в
+    // конспект, а не в markdown-редактор.
+    const visible = toPlainText(message.content);
+    const text = mode === "plain" ? visible.replace(/\s*\[\d{1,3}\]/g, "") : visible;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(mode);

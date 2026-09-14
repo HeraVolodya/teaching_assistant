@@ -148,10 +148,44 @@ def session_messages(request: Request, session_id: str) -> list[MessageOut]:
 
 @router.delete("/sessions/{session_id}/messages", status_code=204)
 def clear_messages(request: Request, session_id: str) -> None:
+    """Очистити розмову, лишивши її саму.
+
+    Відрізняється від видалення сесії навмисно: «очистити» — це продовжити
+    працювати в тій самій вкладці з чистого аркуша, і посилання на неї в
+    історії має пережити операцію.
+    """
     services = services_of(request)
     _session_row(services, session_id)
     with services.db.transaction() as con:
         ChatRepo(con).clear_messages(session_id)
+        # Назву теж скидаємо. Вона походить від ПЕРШОГО питання (`_maybe_title`),
+        # тож після очищення порожня розмова несла б у списку історії заголовок
+        # питання, якого в ній уже немає. `updated_at` рухаємо разом: список
+        # сортується за ним, і без цього щойно очищена розмова лишалась би на
+        # своєму старому місці.
+        con.execute(
+            "UPDATE chat_sessions SET title='', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (session_id,),
+        )
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+def delete_session(request: Request, session_id: str) -> None:
+    """Видалити розмову разом з усіма повідомленнями.
+
+    Повідомлення прибирає каскад (`chat_messages.session_id` →
+    `ON DELETE CASCADE`), а за ними — відгуки (`feedback.message_id`). Окремо
+    видаляти їх не треба й не можна: між двома DELETE відгук лишився б
+    прив'язаним до неіснуючого повідомлення.
+
+    `retrieval_debug_json` кожної відповіді — це найважчий стовпець у чатах
+    (повний розклад пошуку з таймінгами), тож саме видалення старих розмов
+    реально зменшує базу, а не просто прибирає рядки з очей.
+    """
+    services = services_of(request)
+    _session_row(services, session_id)
+    with services.db.transaction() as con:
+        con.execute("DELETE FROM chat_sessions WHERE id=?", (session_id,))
 
 
 def _session_row(services: Services, session_id: str) -> dict[str, Any]:

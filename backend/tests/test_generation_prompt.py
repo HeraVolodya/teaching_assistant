@@ -196,11 +196,17 @@ def test_reduce_prompt_forbids_inventing_new_markers() -> None:
 def test_generation_params_follow_the_plan() -> None:
     p = generation_params(AssistantConfig())
     assert p.temperature == 0.2
-    assert p.max_tokens == 600
+    # Бюджет ділиться з ланцюжком міркувань reasoning-моделей, тому він помітно
+    # більший за обсяг самої відповіді. Перевіряємо нижню межу, а не точне
+    # число: конкретне значення — питання налаштування, а от падіння назад до
+    # ~600 знову дало б порожні відповіді на Gemma 4.
+    assert p.max_tokens >= 2000
     assert 1.05 <= p.repeat_penalty <= 1.10
     assert p.context_overflow_policy == "stopAtLimit"
     assert "<end_of_turn>" in p.stop
-    assert generation_params(AssistantConfig(), detailed=True).max_tokens == 1200
+    # «Детальна» відповідь мусить мати БІЛЬШИЙ бюджет за звичайну, а не константу.
+    detailed = generation_params(AssistantConfig(), detailed=True).max_tokens
+    assert detailed == p.max_tokens * 2
 
 
 def test_abstain_text_is_honest_and_shows_nearest() -> None:

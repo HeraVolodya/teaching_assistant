@@ -361,7 +361,12 @@ def generation_params(config: AssistantConfig | None = None, *,
     cfg = config or AssistantConfig()
     return ChatParams(
         temperature=cfg.temperature,
-        max_tokens=1200 if detailed else cfg.max_tokens,
+        # Подвоєння, а НЕ константа. Раніше тут стояло 1200 — рівно вдвічі від
+        # тодішнього дефолту 600. Щойно дефолт піднявся (див. AssistantConfig.
+        # max_tokens), константа стала МЕНШОЮ за звичайний режим: «детальна
+        # відповідь» отримувала тісніший бюджет, ніж коротка, і в reasoning-
+        # моделей обривалася першою. Співвідношення тримаємо, число — ні.
+        max_tokens=cfg.max_tokens * 2 if detailed else cfg.max_tokens,
         repeat_penalty=cfg.repeat_penalty,
         stop=DEFAULT_STOP,
     )

@@ -163,7 +163,17 @@ export const en: Dictionary = {
     send: "Ask",
     stop: "Stop",
     newChat: "New question",
-    clear: "Clear history",
+    clear: "Clear conversation",
+    clearTitle: "Clear conversation",
+    clearWarning:
+      "The questions and answers will disappear, the conversation itself stays. This cannot be undone.",
+    history: "Conversation history",
+    historyEmpty: "No previous conversations yet",
+    sessionUntitled: "Untitled",
+    sessionEmpty: "No questions yet",
+    deleteSessionTitle: "Delete conversation",
+    deleteSessionWarning:
+      "The questions and answers in this conversation will disappear. This cannot be undone.",
     empty: "Ask your first question",
     emptyHint: "The assistant answers only from the loaded materials and cites pages.",
     retrieving: "Searching the materials…",

@@ -339,7 +339,17 @@ class AssistantConfig:
 
     # --- генерація ---
     temperature: float = 0.2
-    max_tokens: int = 600
+    # Бюджет спільний із ЛАНЦЮЖКОМ МІРКУВАНЬ, а не лише з видимою відповіддю.
+    # Gemma 4 (і будь-яка reasoning-модель) спершу генерує `reasoning_content`,
+    # і лише потім `content`. Замір на реальному питанні: 550 токенів міркування
+    # з 600 → `finish_reason: length`, на відповідь лишилось 41 символ, обрізаний
+    # на півслові. Довший промпт з'їдав усі 600, і користувач отримував ПОРОЖНЮ
+    # відповідь без жодної помилки: клієнт рахує лише дельти `content`, тож стрім
+    # завершувався штатно з `tokens_out=0`.
+    # Вимкнути міркування через API не можна: LM Studio ігнорує і `reasoning: off`,
+    # і `reasoning.effort: none`, і `chat_template_kwargs.enable_thinking: false`.
+    # Єдиний важіль — бюджет. 2200 = ~600 на відповідь + запас на міркування.
+    max_tokens: int = 2200
     repeat_penalty: float = 1.08    # НІКОЛИ вище: високий штраф калічить українську словозміну
     prompt_tier: Literal["compact", "full"] = "compact"
 

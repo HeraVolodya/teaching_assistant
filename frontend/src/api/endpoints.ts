@@ -127,8 +127,11 @@ export const createSession = (assistantId: string, title = "") =>
   api.post<ChatSession>("/sessions", { assistantId, title });
 export const listMessages = (sessionId: string) =>
   api.get<ChatMessage[]>(`/sessions/${sessionId}/messages`);
+/** Стерти повідомлення, лишивши саму розмову в історії. */
 export const clearMessages = (sessionId: string) =>
   api.del<void>(`/sessions/${sessionId}/messages`);
+/** Видалити розмову цілком. Повідомлення прибирає каскад на бекенді. */
+export const deleteSession = (sessionId: string) => api.del<void>(`/sessions/${sessionId}`);
 
 /** Стрім відповіді. AbortSignal — це і є кнопка «Зупинити». */
 export const askQuestion = (payload: ChatIn, signal: AbortSignal) =>

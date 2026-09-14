@@ -380,6 +380,33 @@ class Generator:
         cleaned, citations, unresolved = parse_citations(text, evidence)
         merged = merge_page_ranges(citations)
 
+        # ПОРОЖНЯ ВІДПОВІДЬ — ЦЕ ЗБІЙ, А НЕ РЕЗУЛЬТАТ.
+        # Утримання йде через `_abstain` і сюди не потрапляє, тож нуль видимих
+        # токенів тут означає, що модель нічого не віддала. Найчастіша причина —
+        # reasoning-модель (Gemma 4) вичерпала `max_tokens` на ланцюжок міркувань:
+        # `content` не почався, стрім завершився штатно, і без цієї гілки викладач
+        # бачив порожню бульбашку без жодного пояснення. Саме так цей дефект
+        # і ховався: у логах чисто, HTTP 200, `abstained: false`.
+        if not cleaned.strip():
+            self._event("generation_empty", started, ok=False, error_code="EMPTY_GENERATION",
+                        meta={"strategy": strategy, "tokens_out": tokens_out})
+            return [
+                AnswerChunk(
+                    kind="error",
+                    text=(
+                        "Модель не повернула тексту відповіді. Найімовірніше, увесь бюджет "
+                        f"max_tokens={self.config.max_tokens} пішов на внутрішні міркування "
+                        "моделі. Збільште max_tokens у налаштуваннях асистента або візьміть "
+                        "модель без ланцюжка міркувань."
+                    ),
+                    payload="EMPTY_GENERATION",
+                ),
+                AnswerChunk(kind="done", payload=GenerationResult(
+                    text="", citations=[], unresolved=[], abstained=False, debug=debug,
+                    ttft_ms=ttft_ms, tokens_out=tokens_out, model_id=self.model_id,
+                )),
+            ]
+
         if unresolved and message_id and self.telemetry is not None:
             record_unresolved(
                 self.telemetry, message_id, unresolved,

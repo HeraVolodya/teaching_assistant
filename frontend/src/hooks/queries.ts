@@ -134,7 +134,53 @@ export function useDeleteAssistant() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.deleteAssistant(id),
-    onSuccess: () => void client.invalidateQueries({ queryKey: ["assistants"] }),
+    onSuccess: () => {
+      // Не лише ["assistants"]: разом з асистентом бекенд видаляє його
+      // документи й розмови, і кеші під ["documents", …] / ["sessions", …]
+      // лишилися б показувати те, чого вже немає ні в базі, ні на диску.
+      void client.invalidateQueries({ queryKey: ["assistants"] });
+      void client.invalidateQueries({ queryKey: ["documents"] });
+      void client.invalidateQueries({ queryKey: ["sessions"] });
+      void client.invalidateQueries({ queryKey: ["messages"] });
+    },
+  });
+}
+
+// ------------------------------------------------------------------ розмови
+export function useCreateSession(assistantId: string | undefined) {
+  const client = useQueryClient();
+  return useMutation({
+    // Без аргументів: назву ставить бекенд із першого питання (`_maybe_title`),
+    // і передавати її звідси означало б мати два джерела істини.
+    mutationFn: () => api.createSession(assistantId as string),
+    // Без інвалідації новий чат не з'явився б у списку історії, доки в ньому
+    // не поставлять питання: раніше `createSession` викликався повз
+    // react-query, і кеш ["sessions"] про нього просто не знав.
+    onSuccess: () => void client.invalidateQueries({ queryKey: ["sessions", assistantId] }),
+  });
+}
+
+export function useClearMessages(assistantId: string | undefined) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) => api.clearMessages(sessionId),
+    onSuccess: (_data, sessionId) => {
+      void client.invalidateQueries({ queryKey: ["messages", sessionId] });
+      // Сесії теж: бекенд скидає назву й рухає updated_at, тож порядок і
+      // підпис у списку історії змінюються.
+      void client.invalidateQueries({ queryKey: ["sessions", assistantId] });
+    },
+  });
+}
+
+export function useDeleteSession(assistantId: string | undefined) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (sessionId: string) => api.deleteSession(sessionId),
+    onSuccess: (_data, sessionId) => {
+      client.removeQueries({ queryKey: ["messages", sessionId] });
+      void client.invalidateQueries({ queryKey: ["sessions", assistantId] });
+    },
   });
 }
 

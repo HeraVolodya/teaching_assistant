@@ -16,6 +16,8 @@ recall, ані ризику витоку матеріалів одного ви�
 
 from __future__ import annotations
 
+import logging
+import shutil
 import sqlite3
 from typing import Any
 
@@ -30,11 +32,13 @@ from app.api.schemas import (
     config_from_dict,
 )
 from app.api.state import Services
-from app.db.repositories import AssistantRepo, CollectionRepo
+from app.db.repositories import AssistantRepo, ChunkRepo, CollectionRepo, DocumentRepo
 from app.domain import Assistant, Collection, new_id
+from app.jobs.pipeline import resolve_document_path
 
 __all__ = ["router", "services_of", "default_collection_id"]
 
+log = logging.getLogger("asistent.api")
 router = APIRouter(tags=["assistants"])
 
 
@@ -149,15 +153,88 @@ def update_assistant(request: Request, assistant_id: str, payload: AssistantIn) 
 
 @router.delete("/assistants/{assistant_id}", status_code=204)
 def delete_assistant(request: Request, assistant_id: str) -> None:
+    """Видалити асистента РАЗОМ з його чатами, документами й файлами.
+
+    КАСКАД БД ПРИБИРАЄ НЕ ВСЕ, І ЦЕ БУЛО ТИХОЮ ВИТОКОМ МІСЦЯ.
+    Схема має повний ланцюг `ON DELETE CASCADE` (асистент → колекції →
+    документи → сторінки/чанки, і окремо асистент → сесії → повідомлення →
+    відгуки), тож БД після видалення чиста. Але оригінали підручників лежать
+    НЕ в базі, а файлами під UUID у `docs/`, і каскад до них не дотягується.
+    Раніше тут видалявся лише рядок — і кожен видалений асистент лишав по
+    собі свої PDF назавжди. На сканованому підручнику це 50-100 МБ, яких
+    викладач ніколи не побачить і не зможе знайти: ім'я файлу — UUID, а
+    зв'язок з оригінальною назвою жив у щойно видаленому рядку.
+
+    ПОРЯДОК КРОКІВ ОБОВ'ЯЗКОВИЙ.
+    1. Спершу скасувати завдання: воркер тримає PDF відкритим, і на Windows
+       `unlink` зайнятого файлу кидає `PermissionError`, а не видаляє.
+    2. Зібрати шляхи ДО видалення рядків — після каскаду дізнатись їх нема звідки.
+    3. Видалити рядки.
+    4. Аж потім чіпати диск: файл, зайнятий читачем, не має валити запит,
+       який у базі вже успішно завершився.
+    """
     services = services_of(request)
-    with services.db.transaction() as con:
+    with services.db.connection() as con:
         if AssistantRepo(con).get(assistant_id) is None:
             raise HTTPException(status_code=404, detail="Асистента не знайдено.")
+        collections = CollectionRepo(con).for_assistant(assistant_id)
+        documents = [
+            document
+            for collection in collections
+            for document in DocumentRepo(con).for_collection(collection.id)
+        ]
+
+    for document in documents:
+        services.queue.cancel_document(document.id)
+    files = [resolve_document_path(services.paths, document) for document in documents]
+
+    with services.db.transaction() as con:
+        # FTS5 ПЕРЕД каскадом, і тільки вручну.
+        # `chunk_fts` і `code_fts` — віртуальні таблиці; зовнішніх ключів до
+        # віртуальних таблиць SQLite не підтримує, тому `ON DELETE CASCADE`
+        # їх не бачить. Каскад забирає `chunks`, а їхні пошукові рядки
+        # лишаються назавжди — і саме вони, а не самі чанки, найбільше
+        # роздувають файл бази на великих підручниках. Порядок критичний:
+        # `delete_for_document` шукає rowid через `chunks`, тож після каскаду
+        # видаляти вже не було б за чим.
+        chunks = ChunkRepo(con)
+        for document in documents:
+            chunks.delete_for_document(document.id)
         AssistantRepo(con).delete(assistant_id)
-    # Файли індексу лишаються сиротами на диску: видаляти їх у тій самій
-    # транзакції не можна (на Windows mmap-файл ще відкритий читачем), а
-    # каскад БД уже прибрав усе, що робить їх видимими. Прибирання —
-    # справа обслуговування, не видалення.
+
+    for path in files:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:  # pragma: no cover — файл зайнятий читачем на Windows
+            log.warning("Не вдалося видалити файл %s: %s", path, exc)
+
+    # Індекс — цілий каталог на колекцію (`index_path_for`), тож прибираємо
+    # його разом із версійованими підкаталогами моделей. `ignore_errors`, бо
+    # mmap-файл може бути ще відкритий: залишок каталогу нікому не заважає,
+    # а провалений HTTP-запит після успішного видалення в базі — заважає.
+    for collection in collections:
+        shutil.rmtree(services.paths.index_dir / collection.id, ignore_errors=True)
+
+    _reclaim_space(services)
+
+
+def _reclaim_space(services: Services) -> None:
+    """Повернути ОС сторінки, звільнені каскадом.
+
+    SQLite не зменшує файл сам: видалені сторінки лишаються в ньому як вільні
+    й мовчки переживають перезапуск. Для викладача це виглядає як «видалив
+    підручник, а база й далі важить 400 МБ».
+
+    `incremental_vacuum`, а не `VACUUM`: повний потребує монопольного доступу
+    й тимчасової копії всього файлу, а тут поруч працює процес-воркер із
+    власним з'єднанням. Інкрементальний доступний лише тому, що
+    `auto_vacuum=INCREMENTAL` виставлено на кожному з'єднанні (`SQLITE_PRAGMAS`).
+    """
+    try:
+        with services.db.connection() as con:
+            con.execute("PRAGMA incremental_vacuum")
+    except sqlite3.Error as exc:  # pragma: no cover — зайнята база не привід падати
+        log.warning("Не вдалося повернути вільні сторінки: %s", exc)
 
 
 # --------------------------------------------------------- прев'ю промпту

@@ -372,7 +372,19 @@ route("PUT", /^\/assistants\/([^/]+)$/, ({ match, body }) => {
 });
 
 route("DELETE", /^\/assistants\/([^/]+)$/, ({ match }) => {
+  // Повторюємо КАСКАД бекенда, а не лише зникнення картки. Раніше мок
+  // прибирав самого асистента, а його документи й розмови лишались у стані —
+  // і демо-режим показував матеріали неіснуючого асистента. Перевіряти новий
+  // UI на такому моку означало б перевіряти не те.
+  const assistant = state.assistants.find((a) => a.id === match[1]);
+  const collections = new Set((assistant?.collections ?? []).map((c) => c.id));
+  const sessions = new Set(
+    state.sessions.filter((s) => s.assistantId === match[1]).map((s) => s.id),
+  );
   state.assistants = state.assistants.filter((a) => a.id !== match[1]);
+  state.documents = state.documents.filter((d) => !collections.has(d.collectionId));
+  state.sessions = state.sessions.filter((s) => s.assistantId !== match[1]);
+  state.messages = state.messages.filter((m) => !sessions.has(m.sessionId));
   return undefined;
 });
 
@@ -515,6 +527,20 @@ route("GET", /^\/sessions\/([^/]+)\/messages$/, ({ match }) =>
 );
 
 route("DELETE", /^\/sessions\/([^/]+)\/messages$/, ({ match }) => {
+  state.messages = state.messages.filter((m) => m.sessionId !== match[1]);
+  // Бекенд разом з повідомленнями скидає назву й рухає updated_at — демо
+  // мусить це повторювати, інакше очищена розмова лишиться в історії зі
+  // старим заголовком, і перевірка UI в демо дасть хибно-позитивний результат.
+  const session = state.sessions.find((s) => s.id === match[1]);
+  if (session) {
+    session.title = "";
+    session.updatedAt = nowIso();
+  }
+  return undefined;
+});
+
+route("DELETE", /^\/sessions\/([^/]+)$/, ({ match }) => {
+  state.sessions = state.sessions.filter((s) => s.id !== match[1]);
   state.messages = state.messages.filter((m) => m.sessionId !== match[1]);
   return undefined;
 });
