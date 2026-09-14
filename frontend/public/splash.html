@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Асістент — запуск</title>
+    <!--
+      Заставка на час холодного старту sidecar-а.
+
+      ЧОМУ ОКРЕМИЙ ФАЙЛ, А НЕ ЕКРАН SPA. Вікно показується ДО того, як існує
+      бекенд: `Sidecar::spawn` лише запускає Python, а health-очікування
+      триває до 60 с (STARTUP_TIMEOUT у sidecar.rs) — це холодний старт на HDD
+      доменної машини з увімкненим Defender. React-застосунок у цей момент
+      піднімати нічим і ні для чого.
+
+      ЖОДНИХ ЗОВНІШНІХ РЕСУРСІВ: ні шрифтів, ні скриптів, ні зображень.
+      Цільова машина без мережі, і будь-яке посилання назовні дало б порожнє
+      вікно з мовчазним таймаутом — рівно в той момент, коли викладач уперше
+      бачить програму.
+
+      Вікно закриває оболонка (`show_main` у main.rs) після події готовності.
+      Тут немає ні таймера, ні логіки завершення — інакше заставка зникала б
+      раніше за головне вікно й лишала порожній екран.
+    -->
+    <style>
+      :root {
+        /* Ті самі токени, що й у frontend/src/index.css. */
+        --accent: hsl(231 60% 52%);
+        --bg: hsl(228 24% 12%);
+        --ink: hsl(0 0% 100%);
+        --muted: hsl(228 12% 68%);
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        /* Системні шрифти: власних у постачанні немає й не має бути. */
+        font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        /* Вікно без рамки — не даємо виділяти текст і тягнути його мишею. */
+        user-select: none;
+        cursor: default;
+      }
+      .wrap {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        padding: 24px;
+        text-align: center;
+      }
+      .mark {
+        width: 56px;
+        height: 56px;
+        border-radius: 14px;
+        background: var(--accent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .mark svg { width: 32px; height: 32px; }
+      h1 { margin: 0; font-size: 1.0625rem; font-weight: 600; letter-spacing: 0.01em; }
+      p { margin: 0; font-size: 0.8125rem; color: var(--muted); }
+      .bar {
+        width: 190px;
+        height: 3px;
+        border-radius: 999px;
+        background: hsl(228 14% 24%);
+        overflow: hidden;
+        margin-top: 4px;
+      }
+      .bar i {
+        display: block;
+        width: 40%;
+        height: 100%;
+        border-radius: inherit;
+        background: var(--accent);
+        animation: slide 1.25s ease-in-out infinite;
+      }
+      @keyframes slide {
+        0%   { transform: translateX(-110%); }
+        100% { transform: translateX(360%); }
+      }
+      /* Повага до системного налаштування: без руху смуга просто світиться. */
+      @media (prefers-reduced-motion: reduce) {
+        .bar i { animation: none; width: 100%; opacity: 0.6; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="mark">
+        <!-- Та сама розкрита книга, що й на іконці застосунку. -->
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8"
+             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 6.5v12" />
+          <path d="M12 6.5 4 8v10l8-1.5" />
+          <path d="M12 6.5 20 8v10l-8-1.5" />
+        </svg>
+      </div>
+      <h1>Асістент</h1>
+      <p>Запускаю базу знань…</p>
+      <div class="bar"><i></i></div>
+    </div>
+  </body>
+</html>

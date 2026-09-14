@@ -1,0 +1,156 @@
+# Збірка інсталяторів «Асістента».
+#
+# ЧОМУ ЦЕ ІСНУЄ. Tauri не підтримує крос-компіляцію: Windows-збірку можна
+# зробити лише на Windows, macOS — лише на macOS. Матриця нижче — єдиний
+# спосіб отримати обидва інсталятори з одного тегу.
+#
+# ЧОМУ ЦЕ ЧАСТО ЄДИНИЙ СПОСІБ ЗІБРАТИ ВЗАГАЛІ. На машині розробника з
+# увімкненим Smart App Control (Windows 11) `rustc` не запускається: він
+# вантажить непідписану `rustc_driver-*.dll`, і політика цілісності коду її
+# блокує (подія 3077 у Microsoft-Windows-CodeIntegrity/Operational, код
+# виходу 0xc0e90002). Вимкнути Smart App Control можна лише НЕЗВОРОТНО —
+# повернути його дає тільки перевстановлення Windows. Тому збірка тут.
+#
+# МОДЕЛЕЙ У ЗБІРЦІ НЕМАЄ. `models/` важить ~2.8 ГБ (див. коментар у
+# scripts/fetch_models.py про занижену оцінку в DEPLOY.md), а бюджет
+# інсталятора — 900 МБ. Моделі їдуть на носії окремо й підхоплюються
+# майстром першого запуску, який звіряє SHA-256 кожного файлу.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # Ручний запуск: зібрати інсталятор без тегу, щоб перевірити складання.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версія для імені артефакту (без тегу)"
+        required: false
+        default: "dev"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      # Windows-збірка цінна сама по собі: якщо macOS впаде, інсталятор для
+      # академії все одно має бути.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundle: nsis
+          - os: macos-26
+            target: aarch64-apple-darwin
+            bundle: dmg
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Кеш cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # uv потрібен build_runtime.py: він тягне python-build-standalone і
+      # ставить залежності в релоковане дерево.
+      - name: uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Залежності фронтенду
+        working-directory: frontend
+        run: npm ci
+
+      - name: Тести фронтенду
+        working-directory: frontend
+        run: npm test -- --run
+
+      - name: Збірка фронтенду
+        working-directory: frontend
+        run: npm run build
+
+      # Релокований Python з бекендом усередині. Скрипт сам перевіряє бюджет
+      # (1400 МБ із worker-екстрою) і робить self-check імпортів.
+      - name: Python-рантайм
+        run: python scripts/build_runtime.py
+
+      # bundle.resources у tauri.conf.json жорстко вимагає обидві теки.
+      # `models` лишається порожньою: моделі не входять в інсталятор.
+      - name: Порожня тека моделей
+        shell: bash
+        run: |
+          mkdir -p src-tauri/resources/models
+          touch src-tauri/resources/models/.gitkeep
+
+      - name: Збірка інсталятора
+        run: npm --prefix frontend exec -- tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
+        env:
+          # Офлайн-інсталятор WebView2 (+127 МБ) — свідомо, машина без мережі.
+          TAURI_BUNDLE_WEBVIEW2_INSTALL_MODE: offlineInstaller
+
+      - name: Бюджет розміру
+        shell: bash
+        run: |
+          python scripts/check_size_budget.py --max-mb 900 \
+            src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}/*
+
+      # Головний гейт: встановити зібраний інсталятор у тимчасову теку,
+      # підняти застосунок і дочекатись /api/health. Ловить рівно те, чого не
+      # ловить компіляція — пошкоджений рантайм, відсутній ресурс, мовчазне
+      # падіння Python. Порт фіксуємо: без ASISTENT_PORT sidecar узяв би
+      # переважний 8765, і тест став би чутливим до зайнятих портів раннера.
+      - name: Димовий тест інсталятора
+        shell: bash
+        run: |
+          bundle=src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}
+          installer=$(ls "$bundle"/*-setup.exe "$bundle"/*.dmg 2>/dev/null | head -1)
+          python scripts/smoke_installer.py --installer "$installer"
+
+      - name: Контрольні суми
+        shell: bash
+        working-directory: src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}
+        run: |
+          # Суми йдуть в акт на папері (docs/DEPLOY.md, розділ 5).
+          if command -v sha256sum >/dev/null; then sha256sum * > SHA256SUMS.txt
+          else shasum -a 256 * > SHA256SUMS.txt; fi
+          cat SHA256SUMS.txt
+
+      - name: Артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: asistent-${{ matrix.target }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Реліз
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}/*
+          draft: true
+          body: |
+            Інсталятори зібрані автоматично.
+
+            **Моделей у файлах немає.** Каталог `models/` (~2.8 ГБ) і GGUF
+            генератора постачаються окремо на носії — див. `docs/DEPLOY.md`.
+
+            Перед встановленням звірте SHA-256 з `SHA256SUMS.txt`.

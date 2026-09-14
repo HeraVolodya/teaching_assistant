@@ -1,0 +1,61 @@
+# Завантаження моделей із кешуванням за відбитком каталогу.
+#
+# КЛЮЧ КЕШУ — ВІДБИТОК СПЕЦИФІКАЦІЇ, А НЕ ВЕРСІЯ РЕПОЗИТОРІЮ.
+# `fetch_models.py --print-fingerprint` хешує САМ КАТАЛОГ моделей (репозиторії,
+# ревізії, списки файлів), а не їхній вміст. Змінився каталог — змінився ключ,
+# і моделі перезавантажуються. Не змінився — кеш віддає їх за секунди замість
+# годин. Саме тому відбиток рахується ДО відновлення кешу.
+
+name: fetch-models
+description: Завантажити моделі Асістента у профілі full або tiny, з кешем.
+
+inputs:
+  profile:
+    description: Профіль каталогу — full (постачання) або tiny (PR-прогони).
+    required: false
+    default: tiny
+  models-dir:
+    description: Куди покласти моделі.
+    required: false
+    default: assets/models
+
+outputs:
+  models-dir:
+    description: Абсолютний шлях до каталогу моделей.
+    value: ${{ steps.paths.outputs.dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: Відбиток каталогу
+      id: fingerprint
+      shell: bash
+      run: |
+        echo "value=$(python scripts/fetch_models.py --profile '${{ inputs.profile }}' --print-fingerprint)" >> "$GITHUB_OUTPUT"
+
+    - name: Кеш моделей
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ${{ inputs.models-dir }}
+        key: models-${{ inputs.profile }}-${{ steps.fingerprint.outputs.value }}
+
+    - name: Завантаження
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        python scripts/fetch_models.py \
+          --profile '${{ inputs.profile }}' \
+          --models-dir '${{ inputs.models-dir }}' \
+          --quiet
+
+    # Перевірка SHA-256 виконується ЗАВЖДИ, зокрема на влучанні в кеш:
+    # пошкоджений кеш інакше тихо ламав би прогони, поки не змінився ключ.
+    - name: Перевірка цілісності
+      shell: bash
+      run: python scripts/verify_models.py --models-dir '${{ inputs.models-dir }}'
+
+    - name: Шлях
+      id: paths
+      shell: bash
+      run: echo "dir=$(cd '${{ inputs.models-dir }}' && pwd)" >> "$GITHUB_OUTPUT"

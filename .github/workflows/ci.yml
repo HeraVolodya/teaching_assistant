@@ -1,0 +1,131 @@
+# Перевірки на кожен пуш і PR.
+#
+# ДВА ЗАВДАННЯ, І РІЗНИЦЯ МІЖ НИМИ ПРИНЦИПОВА.
+#
+# `fast` — гейт на Linux без жодної моделі й без extras `worker`. Саме тут
+# ловиться найдорожча помилка проєкту: torch чи docling, що просочилися в
+# гарячий шлях API-процесу. Тому `pip install` навмисно ставить лише `[dev]`;
+# поява `worker` у цьому завданні означає, що інваріант зламано.
+#
+# `integration` — на рідних ОС, бо Tauri не крос-компілюється, а `build_runtime.py`
+# збирає релокований Python саме під ту платформу, на якій працює. Моделі тут
+# беруться у профілі `tiny`: PR-прогони не мають тягнути 2.8 ГБ.
+
+name: ci
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+# Заглушки замість моделей: увесь набір тестів має проходити без жодного
+# завантаженого ML-файлу (див. README, «Швидкий старт»).
+env:
+  ASISTENT_STUB: "1"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Залежності бекенду
+        run: |
+          python -m pip install --upgrade pip
+          # БЕЗ extras `worker`: torch не має права потрапити в гарячий шлях.
+          python -m pip install -e "backend[dev]"
+
+      - name: ruff
+        run: python -m ruff check backend
+
+      - name: Тести бекенду
+        run: python -m pytest backend/tests -q
+
+      # Доводить, що жоден імпорт API-процесу не ходить у мережу: net_guard
+      # має перехопити спробу ще на етапі імпорту.
+      - name: Перевірка офлайну
+        run: python scripts/offline_check.py
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Залежності фронтенду
+        working-directory: frontend
+        run: npm ci
+
+      - name: Типи фронтенду
+        working-directory: frontend
+        run: npx tsc -b --noEmit
+
+      - name: Тести фронтенду
+        working-directory: frontend
+        run: npm test -- --run
+
+  integration:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - uses: astral-sh/setup-uv@v5
+
+      # Крихітний профіль: доводить, що шлях завантаження, маніфест і перевірка
+      # SHA-256 працюють наскрізь, не витрачаючи годину на 2.8 ГБ.
+      - name: Моделі
+        uses: ./.github/actions/fetch-models
+        with:
+          profile: tiny
+
+      - name: Залежності фронтенду
+        working-directory: frontend
+        run: npm ci
+
+      - name: Збірка фронтенду
+        working-directory: frontend
+        run: npm run build
+
+      # Крос-компіляція неможлива — рантайм збирається на цільовій ОС.
+      - name: Python-рантайм
+        run: python scripts/build_runtime.py
+
+      - name: Порожня тека моделей для бандла
+        shell: bash
+        run: mkdir -p src-tauri/resources/models
+
+      # `cargo check`, а не `build`: тут перевіряється, що оболонка
+      # компілюється на обох ОС; повний бандл робить release.yml.
+      - name: Перевірка оболонки
+        working-directory: src-tauri
+        run: cargo check --locked
