@@ -116,8 +116,12 @@ jobs:
       - name: Бюджет розміру
         shell: bash
         run: |
-          python scripts/check_size_budget.py --max-mb 900 \
-            src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}/*
+          bundle=src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}
+          # Перевіряємо САМ інсталятор, а не все, що є в теці: поруч із ним Tauri
+          # лишає .sig і службові файли, і бюджет 900 МБ стосується не їх. Глоб
+          # тут теж через `find` — з тієї ж причини, що й у димовому тесті нижче.
+          find "$bundle" -maxdepth 1 \( -name '*-setup.exe' -o -name '*.dmg' \) -print0 \
+            | xargs -0 python scripts/check_size_budget.py --max-mb 900
 
       # Головний гейт: встановити зібраний інсталятор у тимчасову теку,
       # підняти застосунок і дочекатись /api/health. Ловить рівно те, чого не
@@ -126,9 +130,28 @@ jobs:
       # переважний 8765, і тест став би чутливим до зайнятих портів раннера.
       - name: Димовий тест інсталятора
         shell: bash
+        env:
+          # Застосунок ad-hoc-підписаний: `signingIdentity` у tauri.conf.json немає,
+          # секретів Apple у цьому workflow теж. Без цього вимикача `spctl --assess`
+          # у smoke_installer.py відхилив би збірку. Це свідомий режим CI, а не
+          # обхід перевірки: справжнє постачання потребує Developer ID і
+          # нотаризації (docs/DEPLOY.md, розділ про Gatekeeper).
+          ASISTENT_ALLOW_UNNOTARIZED: "1"
         run: |
           bundle=src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundle }}
-          installer=$(ls "$bundle"/*-setup.exe "$bundle"/*.dmg 2>/dev/null | head -1)
+          # `find`, а НЕ `ls` з двома глобами. GitHub виконує `shell: bash` як
+          # `bash -eo pipefail`, і на кожній платформі один із шаблонів нічого не
+          # зіставляє: bash передає його літералом, `ls` завершується ненульовим
+          # кодом, `pipefail` піднімає цей код, `-e` обриває крок — а `2>/dev/null`
+          # глушить текст. Наслідок: крок падає БЕЗ ЖОДНОГО рядка діагностики, і
+          # Python навіть не стартує. `find` на незіставленому шаблоні не падає.
+          installer=$(find "$bundle" -maxdepth 1 \( -name '*-setup.exe' -o -name '*.dmg' \) | head -1)
+          if [ -z "$installer" ]; then
+            echo "Інсталятор не знайдено в $bundle. Вміст теки:"
+            ls -la "$bundle" || echo "  теки немає"
+            exit 1
+          fi
+          echo "Інсталятор: $installer"
           python scripts/smoke_installer.py --installer "$installer"
 
       - name: Контрольні суми

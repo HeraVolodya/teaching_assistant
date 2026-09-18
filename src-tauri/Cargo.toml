@@ -29,6 +29,15 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_JobObjects",
     "Win32_System_Threading",
+    # НЕ ПРИБИРАТИ, ХОЧА ЖОДНОГО СИМВОЛА ЗВІДСИ МИ НЕ ІМПОРТУЄМО.
+    # `CreateJobObjectW` закрито `#[cfg(feature = "Win32_Security")]`, бо його
+    # перший параметр — `*const SECURITY_ATTRIBUTES` з модуля `Win32::Security`.
+    # Фіча `Win32_System_JobObjects` дає модуль JobObjects, але не цю функцію:
+    # у windows-sys вона оголошена як `Win32_System_JobObjects = ["Win32_System"]`
+    # і Security не підтягує. Без цього рядка збірка падає з E0432, а компілятор
+    # «допомагає» підказкою `CreateJobSet` — це набори джобів, зовсім інший API,
+    # і піти за нею означало б тихо зламати вбивство дерева процесів.
+    "Win32_Security",
 ] }
 
 # На Unix те саме дає група процесів: setpgid(0,0) у дитини + killpg(-pgid).

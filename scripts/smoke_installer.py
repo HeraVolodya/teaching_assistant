@@ -427,6 +427,14 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("--skip-install вимагає --app")
         exe = args.app
     elif args.installer:
+        # `Path("")` нормалізується в `Path(".")` і є ІСТИННИМ: у pathlib немає
+        # `__bool__`. Тому порожній `--installer ""` (наприклад, коли глоб у CI
+        # нічого не зіставив) проходив гілку вище й діставався `hdiutil attach .`
+        # або `start /wait .` — і падав сирим CalledProcessError замість того,
+        # щоб назвати причину. Перевірка існування коштує рядок, а економить
+        # розбір traceback на чужій машині.
+        if not args.installer.is_file():
+            parser.error(f"інсталятор не знайдено: {args.installer}")
         exe = install_windows(args.installer) if platform.system() == "Windows" else install_macos(args.installer)
     else:
         parser.error("потрібен --installer або --skip-install --app")
