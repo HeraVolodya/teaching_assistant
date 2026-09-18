@@ -205,7 +205,7 @@ def wait_health(base: str, timeout_s: int) -> None:
 
 # --------------------------------------------------------------- встановлення
 def install_windows(installer: Path) -> Path:
-    """`/S` — тихе встановлення NSIS. Режим perUser → %LOCALAPPDATA%\\Programs."""
+    """`/S` — тихе встановлення NSIS. Режим currentUser → %LOCALAPPDATA%\\Programs."""
     run = subprocess.run([str(installer), "/S"], check=False)
     if run.returncode != 0:
         raise SmokeFailure(f"Інсталятор завершився з кодом {run.returncode}")

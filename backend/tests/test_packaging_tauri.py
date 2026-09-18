@@ -50,7 +50,10 @@ def test_оновлювач_вимкнено() -> None:
 def test_nsis_per_user_і_офлайн_webview2() -> None:
     nsis = CONF["bundle"]["windows"]["nsis"]
     # Прав адміністратора немає: викладач на доменній машині академії.
-    assert nsis["installMode"] == "perUser"
+    # Саме `currentUser`: у схемі Tauri допустимі лише currentUser/perMachine/both,
+    # і тест довго закріплював неіснуюче `perUser` — через що `tauri build` падав
+    # на валідації конфігу ще до компіляції, а тест цього не бачив.
+    assert nsis["installMode"] == "currentUser"
     assert "Ukrainian" in nsis["languages"]
     assert nsis["languages"][0] == "Ukrainian"
     # downloadBootstrapper у закритому контурі просто зависає.

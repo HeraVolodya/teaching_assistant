@@ -69,7 +69,7 @@
       },
       "allowDowngrades": false,
       "nsis": {
-        "installMode": "perUser",
+        "installMode": "currentUser",
         "languages": ["Ukrainian", "English"],
         "displayLanguageSelector": false,
         "installerHooks": "nsis/hooks.nsh",

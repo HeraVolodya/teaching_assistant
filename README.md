@@ -52,7 +52,7 @@ cd frontend && npm install && npm run dev
 
 ```bash
 python scripts/build_runtime.py          # релокований Python через uv + python-build-standalone
-cd src-tauri && cargo tauri build        # → .exe (NSIS, perUser) / .app + .dmg
+cd src-tauri && cargo tauri build        # → .exe (NSIS, currentUser) / .app + .dmg
 ```
 
 Windows-збірку можна зробити лише на Windows, macOS — лише на macOS: Tauri не підтримує

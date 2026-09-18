@@ -92,7 +92,7 @@ USB/
 ### 4.1 Windows 11
 
 ```bat
-:: тихе встановлення, БЕЗ прав адміністратора (NSIS installMode perUser)
+:: тихе встановлення, БЕЗ прав адміністратора (NSIS installMode currentUser)
 Asistent_0.1.0_x64-setup.exe /S
 ```
 
