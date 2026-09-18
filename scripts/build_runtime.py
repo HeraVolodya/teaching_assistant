@@ -248,7 +248,36 @@ def install_python(out_dir: Path, uv: str) -> Path:
     # Аліас лишився висіти в staging — прибираємо разом із нею. `ignore_errors`
     # саме через нього: видалення обірваного посилання на Windows буває гучним.
     shutil.rmtree(staging, ignore_errors=True)
+    _drop_externally_managed(out_dir)
     return out_dir
+
+
+def _drop_externally_managed(runtime_dir: Path) -> None:
+    """Прибрати маркер PEP 668, який `uv` лишає у власних рантаймах.
+
+    ЧОМУ ЦЕ НЕ ОБХІД ЗАХИСТУ, А ВИПРАВЛЕННЯ ХИБНИХ МЕТАДАНИХ.
+    `uv python install` кладе у рантайм файл `EXTERNALLY-MANAGED` з текстом
+    «This Python installation is managed by uv and should not be modified»,
+    і наступний `uv pip install --python …` через нього відмовляє:
+
+        error: The interpreter at … is externally managed
+
+    Твердження маркера правдиве, доки рантайм лежить у сховищі `uv`. Ми ж
+    щойно ВИНЕСЛИ його в `src-tauri/resources/runtime`: це вже не керована
+    копія, а постачальний рантайм застосунку, і встановлення бекенду в нього
+    — весь сенс цього скрипта.
+
+    Тому саме видалення, а не `--break-system-packages`: нічого не ламається,
+    просто метадані перестали відповідати дійсності після переносу. Інакше
+    хибний маркер поїхав би ще й в інсталятор і блокував би будь-яке майбутнє
+    обслуговування рантайму на машині викладача.
+
+    Шлях різний за платформами (`Lib/` на Windows, `lib/pythonX.Y/` на Unix),
+    тож шукаємо глобом, а не складаємо вручну.
+    """
+    for marker in runtime_dir.rglob("EXTERNALLY-MANAGED"):
+        marker.unlink()
+        log(f"Прибрано маркер PEP 668: {marker.relative_to(runtime_dir)}")
 
 
 def install_packages(runtime_dir: Path, uv: str, *, extras: list[str]) -> None:
