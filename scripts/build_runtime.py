@@ -224,13 +224,29 @@ def install_python(out_dir: Path, uv: str) -> Path:
     # виду `cpython-3.12.x-macos-aarch64-none`.
     run([uv, "python", "install", "--install-dir", str(staging), PYTHON_VERSION])
 
-    installed = [p for p in staging.iterdir() if p.is_dir() and p.name.startswith("cpython-")]
+    # ДЕДУПЛІКАЦІЯ ЗА РЕАЛЬНИМ ШЛЯХОМ, А НЕ ПІДРАХУНОК КАТАЛОГІВ.
+    # uv кладе поруч зі справжнім каталогом ще й аліас мінорної версії:
+    # `cpython-3.12-windows-x86_64-none` → `cpython-3.12.14-windows-x86_64-none`.
+    # Для `Path.is_dir()` симлінк на каталог — теж каталог, тож наївний підрахунок
+    # бачив два рантайми й валив збірку на обох ОС одразу. Рахувати треба
+    # РЕАЛЬНІ каталоги: `resolve()` зводить аліас і ціль в один шлях, і це
+    # однаково працює для симлінка (macOS, Git for Windows) і для junction
+    # (NTFS), а не покладається на `is_symlink()`, який junction не бачить.
+    candidates = [p for p in staging.iterdir() if p.is_dir() and p.name.startswith("cpython-")]
+    installed = sorted({p.resolve() for p in candidates})
     if len(installed) != 1:
-        raise SystemExit(f"Очікували рівно один рантайм у {staging}, знайшли: {installed}")
+        raise SystemExit(
+            f"Очікували рівно один рантайм у {staging}, знайшли: {installed} "
+            f"(кандидати до зведення аліасів: {[p.name for p in candidates]})"
+        )
 
     if out_dir.exists():
         shutil.rmtree(out_dir)
+    # Переносимо саме ціль, а не аліас: інакше на місце рантайму ліг би
+    # симлінк, і в інсталятор поїхало б порожнє посилання замість Python.
     shutil.move(str(installed[0]), str(out_dir))
+    # Аліас лишився висіти в staging — прибираємо разом із нею. `ignore_errors`
+    # саме через нього: видалення обірваного посилання на Windows буває гучним.
     shutil.rmtree(staging, ignore_errors=True)
     return out_dir
 

@@ -53,6 +53,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Версію закріплено навмисно: `build_runtime.py` ставить 3.12 через uv,
+      # але сам виконується хостовим Python, і покладатися на те, який саме
+      # опиниться в образі раннера, — зайва змінна в збірці постачання.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Node
         uses: actions/setup-node@v4
         with:
@@ -100,11 +107,11 @@ jobs:
           mkdir -p src-tauri/resources/models
           touch src-tauri/resources/models/.gitkeep
 
+      # Офлайн-інсталятор WebView2 (+127 МБ) задано в tauri.conf.json
+      # (`webviewInstallMode.type`), а не тут: `downloadBootstrapper` у закритому
+      # контурі просто зависає, і це рішення закріплене тестом пакування.
       - name: Збірка інсталятора
         run: npm --prefix frontend exec -- tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundle }}
-        env:
-          # Офлайн-інсталятор WebView2 (+127 МБ) — свідомо, машина без мережі.
-          TAURI_BUNDLE_WEBVIEW2_INSTALL_MODE: offlineInstaller
 
       - name: Бюджет розміру
         shell: bash
