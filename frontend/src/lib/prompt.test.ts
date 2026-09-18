@@ -46,6 +46,13 @@ describe("SYSTEM_RULES_UK", () => {
       // нема з чим — тест не має падати з цієї причини.
       return;
     }
+    // Нормалізуємо кінці рядків ПЕРЕД порівнянням.
+    // `core.autocrlf=true` — дефолт Git на Windows, тобто і на машині
+    // викладача, і на раннері windows-latest. Регулярка нижче вимагає `\n)`,
+    // тож на CRLF-копії вона не знаходила нічого, і «найважливіший тест у
+    // файлі» падав на кожній Windows-збірці — саме там, де він найпотрібніший.
+    // Порівнюємо зміст префікса, а не кодування кінців рядків у робочій копії.
+    source = source.replace(/\r\n/g, "\n");
     const match = /SYSTEM_RULES_UK = \(\n([\s\S]*?)\n\)\n/.exec(source);
     expect(match, "SYSTEM_RULES_UK не знайдено у prompt_builder.py").not.toBeNull();
 
