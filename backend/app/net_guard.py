@@ -18,10 +18,17 @@ from __future__ import annotations
 import ipaddress
 import os
 import socket
-from typing import Iterable
+
+# `Any` використовується в анотації `_is_in_process_transport`, але імпорту не
+# було: код працював лише тому, що `from __future__ import annotations` робить
+# анотації рядками й не обчислює їх. Будь-яка спроба прочитати їх у рантаймі
+# (typing.get_type_hints, pydantic, dataclasses) впала б із NameError.
+# `Iterable` — з collections.abc: у typing він застарів із Python 3.9.
+from collections.abc import Iterable
+from typing import Any
 from urllib.parse import urlsplit
 
-__all__ = ["OutboundNetworkBlocked", "install", "is_allowed", "allowed_hosts"]
+__all__ = ["OutboundNetworkBlocked", "allowed_hosts", "install", "is_allowed"]
 
 
 class OutboundNetworkBlocked(RuntimeError):

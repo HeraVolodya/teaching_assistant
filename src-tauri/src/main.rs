@@ -137,6 +137,22 @@ fn show_main(handle: &tauri::AppHandle) {
 /// Саме цей діалог перетворює «застосунок не запускається» на конкретний
 /// Python-traceback, який можна переслати розробнику.
 fn fatal(handle: &tauri::AppHandle, message: &str) {
+    // ТЕКСТ — У STDERR ПЕРШИМ ДІЛОМ, ДІАЛОГ — ПОТІМ.
+    // Повідомлення містить хвіст `sidecar.log`, тобто саме той Python-traceback,
+    // заради якого все це й будувалось. Досі він існував ЛИШЕ всередині
+    // модального вікна: у CI його нікому натиснути, тож застосунок не виходив,
+    // а висів, і димовий тест бачив тільки «Connection refused» без причини.
+    eprintln!("{message}");
+
+    // Безголове середовище: діалог показувати нема кому й нема на чому.
+    // `CI` виставляє GitHub Actions сам; `ASISTENT_HEADLESS` лишаємо як явний
+    // важіль для локального відтворення.
+    let headless = std::env::var_os("CI").is_some() || std::env::var_os("ASISTENT_HEADLESS").is_some();
+    if headless {
+        handle.exit(1);
+        return;
+    }
+
     let handle_for_exit = handle.clone();
     handle
         .dialog()

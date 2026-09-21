@@ -21,6 +21,18 @@ import argparse
 import sys
 from pathlib import Path
 
+# UTF-8 НЕЗАЛЕЖНО ВІД КОНСОЛІ.
+# На Windows `sys.stdout` має кодування cp1252 з обробником `strict`, тож будь-яка
+# кирилиця у виводі валить скрипт з UnicodeEncodeError — саме так падав крок
+# перевірки бюджету в CI. У workflow це закрито змінною PYTHONUTF8, але скрипт
+# мусить лишатися самодостатнім: docs/DEPLOY.md пропонує запускати його вручну
+# з `cmd` на машині викладача, де жодних змінних середовища не виставлено.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+    except (AttributeError, ValueError, OSError):  # pragma: no cover — перенаправлений потік
+        pass
+
 
 def size_of(path: Path) -> int:
     if path.is_file():

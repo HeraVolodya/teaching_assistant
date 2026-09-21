@@ -40,6 +40,18 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+# UTF-8 НЕЗАЛЕЖНО ВІД КОНСОЛІ.
+# На Windows `sys.stdout` має кодування cp1252 з обробником `strict`, тож будь-яка
+# кирилиця у виводі валить скрипт з UnicodeEncodeError — саме так падав крок
+# перевірки бюджету в CI. У workflow це закрито змінною PYTHONUTF8, але скрипт
+# мусить лишатися самодостатнім: docs/DEPLOY.md пропонує запускати його вручну
+# з `cmd` на машині викладача, де жодних змінних середовища не виставлено.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+    except (AttributeError, ValueError, OSError):  # pragma: no cover — перенаправлений потік
+        pass
+
 DEFAULT_PORT = 8765
 HEALTH_PATH = "/api/health"
 ASSISTANTS_PATH = "/api/assistants"
@@ -66,7 +78,43 @@ def log(msg: str) -> None:
     print(f"[smoke] {msg}", flush=True)
 
 
-# --------------------------------------------------------------- фікстура PDF
+# ------------------------------------------------------------- фікстури
+def make_test_markdown(path: Path) -> Path:
+    """Фікстура приймання для stub-режиму.
+
+    Заголовки справжні (`#`, `##`): чанкер будує з них `header_path`, і плаский
+    файл без ієрархії перевіряв би менше, ніж може. Текст латиницею з тієї ж
+    причини, що й у PDF-фікстурі нижче, — цей тест про пакування, а не про
+    якість українського пошуку.
+
+    Маркер повторюється в тілі розділу, а не лише в заголовку: заглушка
+    ембедера детермінована, але не семантична, тож збіг має бути лексичним.
+    """
+    body = "\n".join(
+        [
+            "# ARTYLERIYSKA PIDHOTOVKA - TEST DOCUMENT",
+            "",
+            "## Rozdil 1. Zahalni polozhennya",
+            "",
+            f"Unikalnyi marker: {MARKER}-01. Tsey rozdil opysuye zahalni polozhennya.",
+            "",
+            "## Rozdil 2. Popravka na deryvatsiyu",
+            "",
+            f"Unikalnyi marker: {MARKER}-02. Deryvatsiya - tse vidhylennya snaryada",
+            f"vbik obertannya. Popravka na deryvatsiyu {MARKER}-02 vrahovuyetsya",
+            "pry rozrahunku ustanovok dlya strilby.",
+            "",
+            "## Rozdil 3. Tablytsi strilby",
+            "",
+            f"Unikalnyi marker: {MARKER}-03. Dalnist 4000 m, popravka 0-12.",
+            "",
+        ]
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
 def make_test_pdf(path: Path) -> Path:
     """Створити валідний 3-сторінковий PDF лише на стандартній бібліотеці.
 
@@ -171,7 +219,14 @@ def request(
         raise SmokeFailure(f"{method} {url}: {exc}") from exc
 
 
-def multipart(field: str, filename: str, data: bytes, extra: dict[str, str]) -> tuple[bytes, str]:
+def multipart(
+    field: str,
+    filename: str,
+    data: bytes,
+    extra: dict[str, str],
+    *,
+    file_content_type: str = "application/pdf",
+) -> tuple[bytes, str]:
     boundary = f"----asistent{uuid.uuid4().hex}"
     parts: list[bytes] = []
     for key, value in extra.items():
@@ -180,17 +235,73 @@ def multipart(field: str, filename: str, data: bytes, extra: dict[str, str]) -> 
         )
     parts.append(
         f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; "
-        f"filename=\"{filename}\"\r\nContent-Type: application/pdf\r\n\r\n".encode()
+        f"filename=\"{filename}\"\r\nContent-Type: {file_content_type}\r\n\r\n".encode()
     )
     parts.append(data)
     parts.append(f"\r\n--{boundary}--\r\n".encode())
     return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
 
-def wait_health(base: str, timeout_s: int) -> None:
+def sidecar_log_path() -> Path:
+    """Дзеркало `Layout::resolve` із src-tauri/src/sidecar.rs.
+
+    Дублювання прикре, але альтернатива гірша: без цього шляху причина
+    невдалого старту лишається у файлі, якого ніхто не читає.
+    """
+    override = os.environ.get("ASISTENT_DATA_DIR")
+    if override:
+        return Path(override) / "logs" / "sidecar.log"
+    if platform.system() == "Darwin":
+        return Path.home() / "Library" / "Logs" / "Asistent" / "sidecar.log"
+    local = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    return local / "Asistent" / "logs" / "sidecar.log"
+
+
+def dump_diagnostics(proc: subprocess.Popen | None = None) -> None:
+    """Усе, що система знає про невдалий старт, — у лог CI.
+
+    ЧОМУ ЦЕ ОКРЕМА ФУНКЦІЯ І ЧОМУ ВОНА ВАЖЛИВІША ЗА БУДЬ-ЯКУ ПЕРЕВІРКУ ТУТ.
+    Досі провал старту давав рівно один рядок — «Сервер не відповів за 60 с» —
+    і жодної підказки, чи Python не знайшовся, чи впав на імпорті, чи оболонку
+    вбило ядро. Уся діагностика при цьому ІСНУВАЛА: sidecar пише stdout і stderr
+    дитини у `sidecar.log`, а оболонка кладе туди traceback. Просто ніхто цей
+    файл не відкривав. Кожен наступний прогін CI коштує пів години, тож сліпа
+    ітерація — найдорожче, що тут можна робити.
+    """
+    if proc is not None:
+        code = proc.poll()
+        log(f"процес застосунку: {'живий' if code is None else f'помер із кодом {code}'}")
+
+    path = sidecar_log_path()
+    log(f"sidecar.log: {path}")
+    if path.exists():
+        try:
+            tail = path.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
+        except OSError as exc:  # pragma: no cover — файл зайнятий
+            log(f"  не вдалося прочитати: {exc}")
+        else:
+            log(f"  останні {len(tail)} рядків:")
+            for line in tail:
+                log(f"  | {line}")
+    else:
+        log("  файлу немає — sidecar, найімовірніше, не стартував узагалі")
+
+    port_file = path.parent / "api-port.json"
+    if port_file.exists():
+        log(f"api-port.json: {port_file.read_text(encoding='utf-8', errors='replace').strip()}")
+    else:
+        log("api-port.json відсутній — оболонка не дійшла до запуску sidecar")
+
+
+def wait_health(base: str, timeout_s: int, proc: subprocess.Popen | None = None) -> None:
     deadline = time.monotonic() + timeout_s
     last = "з'єднання не встановлено"
     while time.monotonic() < deadline:
+        # Смерть процесу — це відповідь, і чекати решту таймауту після неї
+        # безглуздо: 60 с очікування «на всяк випадок» лише ховають причину.
+        if proc is not None and proc.poll() is not None:
+            dump_diagnostics(proc)
+            raise SmokeFailure(f"Застосунок завершився з кодом {proc.returncode} до готовності API")
         try:
             status, payload = request(base + HEALTH_PATH, timeout=3)
             if status == 200:
@@ -200,6 +311,7 @@ def wait_health(base: str, timeout_s: int) -> None:
         except SmokeFailure as exc:
             last = str(exc)
         time.sleep(0.5)
+    dump_diagnostics(proc)
     raise SmokeFailure(f"Сервер не відповів на {base}{HEALTH_PATH} за {timeout_s} с ({last})")
 
 
@@ -209,14 +321,37 @@ def install_windows(installer: Path) -> Path:
     run = subprocess.run([str(installer), "/S"], check=False)
     if run.returncode != 0:
         raise SmokeFailure(f"Інсталятор завершився з кодом {run.returncode}")
+
+    # ШЛЯХ НЕ ЗАШИВАЄМО: шаблон NSIS у Tauri для `installMode: currentUser`
+    # ставить у %LOCALAPPDATA%\<productName>, а не в ...\Programs\<productName>.
+    # Зашитий варіант давав «Після встановлення не знайдено …» через 60 с — і
+    # виглядало це як зламаний інсталятор, хоча той відпрацював бездоганно.
+    # Перебираємо обидва відомі розташування, а якщо не знайшли — показуємо, що
+    # насправді з'явилось, замість голого шляху.
     local = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    exe = local / "Programs" / "Asistent" / "Asistent.exe"
+    candidates = [
+        local / "Asistent" / "Asistent.exe",
+        local / "Programs" / "Asistent" / "Asistent.exe",
+    ]
     deadline = time.monotonic() + 60
-    while not exe.exists() and time.monotonic() < deadline:
+    while time.monotonic() < deadline:
+        for exe in candidates:
+            if exe.exists():
+                log(f"встановлено в {exe.parent}")
+                return exe
         time.sleep(1)
-    if not exe.exists():
-        raise SmokeFailure(f"Після встановлення не знайдено {exe}")
-    return exe
+
+    log("Не знайдено виконуваного файлу. Що є в кандидатах:")
+    for exe in candidates:
+        parent = exe.parent
+        log(f"  {parent}: {'є' if parent.exists() else 'немає'}")
+        if parent.exists():
+            for item in sorted(parent.iterdir())[:20]:
+                log(f"    {item.name}")
+    raise SmokeFailure(
+        "Після встановлення не знайдено Asistent.exe у жодному з: "
+        + ", ".join(str(c) for c in candidates)
+    )
 
 
 def install_macos(installer: Path) -> Path:
@@ -332,10 +467,14 @@ def run_scenario(base: str) -> None:
     #    `confidenceRequired: low` — димовий тест перевіряє КОНВЕЄР, а не
     #    якість пошуку: гейт якості живе в регресійному наборі, і зав'язувати
     #    на нього реліз означало б валити збірку через дрейф скорів.
+    # `confidence_required`, а НЕ `confidenceRequired`: `config_from_dict`
+    # фільтрує вхідний словник за полями датакласа (snake_case) і невідомі ключі
+    # відкидає МОВЧКИ. camelCase тут просто зникав, асистент діставав дефолтний
+    # поріг «medium» (0.35) — саме те утримання, якого цей рядок мав уникнути.
     assistant = post_json(
         base,
         ASSISTANTS_PATH,
-        {"name": "Димовий тест", "emoji": "🧪", "config": {"confidenceRequired": "low"}},
+        {"name": "Димовий тест", "emoji": "🧪", "config": {"confidence_required": "low"}},
     )
     collections = assistant.get("collections") or []
     if not collections:
@@ -343,9 +482,27 @@ def run_scenario(base: str) -> None:
     collection_id = collections[0]["id"]
     log(f"асистент {assistant['id']}, колекція {collection_id}")
 
-    # 2. Завантаження 3-сторінкового PDF.
-    pdf = make_test_pdf(Path("smoke-fixture.pdf"))
-    body, content_type = multipart("files", pdf.name, pdf.read_bytes(), {"docType": "textbook"})
+    # 2. Завантаження фікстури.
+    #
+    #    MARKDOWN, А НЕ PDF — І ЦЕ НЕ СПРОЩЕННЯ.
+    #    Тест працює під ASISTENT_STUB=1, а в цьому режимі `parse_document`
+    #    віддає PDF у `_parse_stub`, який ІГНОРУЄ вміст файлу й синтезує текст
+    #    з імені та розміру. Тобто маркер, який ми потім шукаємо у відповіді,
+    #    до індексу не потрапляв би ніколи, і сценарій був недосяжний за
+    #    побудовою. Текстові суфікси обробляються РАНІШЕ за stub-гілку
+    #    (`docling_pipeline.parse_document`), тож із .md у індекс іде справжній
+    #    вміст і перевірка «відповідь спирається на завантажений документ»
+    #    знову щось доводить.
+    #
+    #    Що цим НЕ перевіряється: docling, OCR і цитата на сторінку PDF. У
+    #    stub-режимі вони й не виконувались — підміняв їх той самий `_parse_stub`.
+    #    Реальний шлях PDF живе в регресійному наборі приймання, якому потрібні
+    #    моделі; сюди його тягнути означало б возити 2.8 ГБ у кожен реліз.
+    fixture = make_test_markdown(Path("smoke-fixture.md"))
+    body, content_type = multipart(
+        "files", fixture.name, fixture.read_bytes(), {"docType": "textbook"},
+        file_content_type="text/markdown",
+    )
     status, payload = request(
         base + UPLOAD_PATH.format(collection_id=collection_id),
         method="POST", body=body, content_type=content_type, timeout=120,
@@ -457,7 +614,7 @@ def main(argv: list[str] | None = None) -> int:
 
     failure: str | None = None
     try:
-        wait_health(base, STARTUP_TIMEOUT_S)
+        wait_health(base, STARTUP_TIMEOUT_S, proc)
         run_scenario(base)
     except SmokeFailure as exc:
         failure = str(exc)
