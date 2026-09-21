@@ -29,7 +29,7 @@ import shutil
 import subprocess
 import sys
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,13 +42,18 @@ from app.api.schemas import DownloadIn
 from app.api.state import Services
 from app.db.repositories import TelemetryRepo
 
-__all__ = ["router", "APP_VERSION"]
+__all__ = ["APP_VERSION", "router"]
 
 log = logging.getLogger("asistent.api.system")
 
 APP_VERSION = "0.1.0"
 
 router = APIRouter(tags=["system"])
+
+# Власники фонових задач завантаження моделей. `asyncio` тримає на задачу лише
+# слабке посилання, тож без цієї множини збирач сміття може прибрати її посеред
+# роботи — і завантаження обірветься тихо, без винятку й без запису в лог.
+_DOWNLOAD_TASKS: set[asyncio.Task[None]] = set()
 
 
 # ---------------------------------------------------------------- здоров'я
@@ -82,7 +87,7 @@ def _database_state(services: Services) -> tuple[bool, str, int]:
         with services.db.connection() as con:
             row = con.execute("SELECT max(version) FROM schema_version").fetchone()
         return True, "", int(row[0] or 0)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return False, str(exc), 0
 
 
@@ -147,10 +152,10 @@ def _hardware_and_plan() -> tuple[dict[str, Any], dict[str, Any]]:
                 "fileBytes": plan.spec.file_bytes,
                 "archVerified": getattr(plan.spec, "arch_verified", True),
             }
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             recommendation = {"error": str(exc)}
         return hardware, recommendation
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return {"error": str(exc)}, {"error": str(exc)}
 
 
@@ -243,10 +248,15 @@ async def download_model(request: Request, payload: DownloadIn) -> dict[str, Any
     model_ref = _resolve_model_ref(payload.model)
     try:
         download_id = await downloader(model_ref)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(status_code=502, detail=f"LM Studio відхилив запит: {exc}") from exc
 
-    asyncio.create_task(_watch_download(services, backend, download_id, model_ref))
+    # Посилання тримаємо НАВМИСНО: `asyncio` зберігає лише слабке посилання на
+    # задачу, тож без власника збирач сміття може прибрати її посеред
+    # завантаження моделі — і воно тихо обірветься без жодної помилки.
+    task = asyncio.create_task(_watch_download(services, backend, download_id, model_ref))
+    _DOWNLOAD_TASKS.add(task)
+    task.add_done_callback(_DOWNLOAD_TASKS.discard)
     return {"downloadId": download_id, "model": model_ref}
 
 
@@ -293,7 +303,7 @@ async def _watch_download(
             await asyncio.sleep(1.0)
     except asyncio.CancelledError:  # pragma: no cover
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         services.emit(MODEL_DOWNLOAD, {
             "downloadId": download_id, "model": model,
             "state": "error", "message": str(exc),
@@ -302,8 +312,10 @@ async def _watch_download(
 
 # ------------------------------------------------------------------ SSE
 @router.get("/events")
-async def events(request: Request, last_event_id: str | None = Query(default=None,
-                                                                    alias="lastEventId")) -> StreamingResponse:
+async def events(
+    request: Request,
+    last_event_id: str | None = Query(default=None, alias="lastEventId"),
+) -> StreamingResponse:
     """Єдиний мультиплексований канал подій.
 
     `Last-Event-ID` браузер надсилає заголовком автоматично при
@@ -353,7 +365,7 @@ def diagnostics_bundle(
     # документів у пакет підтримки в обхід політики.
     allow_titles = bool(include_titles and services.settings.diagnostics_include_titles)
     buffer = io.BytesIO()
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
 
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("readme.txt", _README)
@@ -426,7 +438,7 @@ def _documents_summary(services: Services, include_titles: bool) -> list[dict[st
         }
     out: list[dict[str, Any]] = []
     for row in rows:
-        item = {k: row[k] for k in row.keys() if k != "title"}
+        item = {k: row[k] for k in row if k != "title"}
         item["chunks"] = counts.get(row["id"], 0)
         if include_titles:
             item["title"] = row["title"]
@@ -548,8 +560,6 @@ def _model_files_present(model_dir: Path, onnx_file: str) -> bool:
     if not (model_dir / "tokenizer.json").is_file():
         return False
     weights = model_dir / onnx_file
-    if weights.is_file():
-        return True
     # Великі експорти кладуть вагу поруч як `<name>.onnx_data`; сам .onnx тоді
     # маленький, але без сусіда сесія не піднімається.
-    return False
+    return weights.is_file()

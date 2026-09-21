@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import pytest
+from helpers_retrieval import build_corpus
 
 from app.domain import AssistantConfig, ChunkLevel, RetrievalDebug, RetrievedChunk
 from app.eval import gold_set as G
@@ -16,7 +17,6 @@ from app.eval import runner as R
 from app.rerank.reranker import create_reranker
 from app.retrieval import fusion
 from app.retrieval.hybrid import HybridRetriever
-from helpers_retrieval import build_corpus
 
 
 @pytest.fixture
@@ -95,11 +95,10 @@ def test_ranked_uids_respect_depth():
 # ---------------------------------------------------- автопідйом ваги sparse
 def test_anchor_boost_is_restored_even_after_an_exception():
     original = fusion.ANCHORED_SPARSE_WEIGHT
-    with pytest.raises(RuntimeError):
-        with R.anchor_boost_disabled():
-            assert fusion.ANCHORED_SPARSE_WEIGHT == 0.0
-            raise RuntimeError("щось пішло не так")
-    assert fusion.ANCHORED_SPARSE_WEIGHT == original
+    with pytest.raises(RuntimeError), R.anchor_boost_disabled():
+        assert fusion.ANCHORED_SPARSE_WEIGHT == 0.0
+        raise RuntimeError("щось пішло не так")
+    assert original == fusion.ANCHORED_SPARSE_WEIGHT
 
 
 def test_dense_only_arm_really_excludes_sparse_on_an_anchored_query(retriever, corpus):

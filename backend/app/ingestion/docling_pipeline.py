@@ -54,20 +54,20 @@ from app.ingestion.page_labels import PageLabelMap, resolve_page_labels
 from app.ingestion.probe import ProbeReport, probe_pdf, probe_text, window_boundaries
 
 __all__ = [
-    "ElementKind",
-    "ParsedElement",
-    "ParsedPage",
-    "ParsedDocument",
-    "ParseOptions",
-    "parse_document",
-    "ocr_options_spec",
-    "build_parse_profile",
-    "parse_profile_hash",
-    "serialize_table_triplets",
-    "page_windows",
-    "is_stub_mode",
     "DOCLING_VERSION",
     "SUPPORTED_TEXT_SUFFIXES",
+    "ElementKind",
+    "ParseOptions",
+    "ParsedDocument",
+    "ParsedElement",
+    "ParsedPage",
+    "build_parse_profile",
+    "is_stub_mode",
+    "ocr_options_spec",
+    "page_windows",
+    "parse_document",
+    "parse_profile_hash",
+    "serialize_table_triplets",
 ]
 
 log = logging.getLogger(__name__)
@@ -268,7 +268,7 @@ class ParseOptions:
     progress: Callable[[float, float], None] | None = None
 
     @classmethod
-    def for_mode(cls, mode: IngestMode, **overrides: Any) -> "ParseOptions":
+    def for_mode(cls, mode: IngestMode, **overrides: Any) -> ParseOptions:
         """Єдина точка, де режим приймання визначає склад конвеєра.
 
         «Швидко» мусить бути ШВИДКО: layout + OCR + таблиці, усе детерміноване.

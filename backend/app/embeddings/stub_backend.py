@@ -44,7 +44,7 @@ from app.embeddings.provider import (
 )
 from app.embeddings.registry import UK_RETRIEVAL_TASK, EmbeddingModel
 
-__all__ = ["StubEmbeddingProvider", "STUB_CHARS_PER_TOKEN"]
+__all__ = ["STUB_CHARS_PER_TOKEN", "StubEmbeddingProvider"]
 
 # Українська fertility під токенайзером Qwen — ~1.93 символа на токен (план, §5).
 # Заглушка не має токенайзера, тож рахує токени за цим коефіцієнтом. Число

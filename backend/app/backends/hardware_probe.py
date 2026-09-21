@@ -47,10 +47,21 @@ from dataclasses import dataclass
 from typing import Literal
 
 __all__ = [
-    "GIB", "GpuInfo", "Hardware", "VramEstimate", "MachineCalibration",
-    "probe_hardware", "kv_cache_bytes", "estimate_vram", "plan_gpu_offload",
-    "KV_BYTES_PER_ELEMENT", "COMPUTE_BUFFER_GIB", "CUDA_CONTEXT_GIB",
-    "DISPLAY_RESERVE_GIB", "MMPROJ_GIB", "MIN_HEADROOM_GIB",
+    "COMPUTE_BUFFER_GIB",
+    "CUDA_CONTEXT_GIB",
+    "DISPLAY_RESERVE_GIB",
+    "GIB",
+    "KV_BYTES_PER_ELEMENT",
+    "MIN_HEADROOM_GIB",
+    "MMPROJ_GIB",
+    "GpuInfo",
+    "Hardware",
+    "MachineCalibration",
+    "VramEstimate",
+    "estimate_vram",
+    "kv_cache_bytes",
+    "plan_gpu_offload",
+    "probe_hardware",
 ]
 
 GIB = 1024 ** 3

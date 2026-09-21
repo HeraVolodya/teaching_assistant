@@ -71,7 +71,7 @@ class Paths:
     logs_dir: Path
 
     @classmethod
-    def resolve(cls, data_dir: str | os.PathLike[str] | None = None) -> "Paths":
+    def resolve(cls, data_dir: str | os.PathLike[str] | None = None) -> Paths:
         # Перевіряється РЯДОК зі змінної середовища, а не зібраний із нього
         # `Path`. `Path("")` дорівнює `Path(".")` і є ІСТИННИМ, тому колишнє
         # `Path(os.environ.get(...)) or _default_data_dir()` ніколи не доходило
@@ -97,7 +97,7 @@ class Paths:
             logs_dir=_default_log_dir(base),
         )
 
-    def ensure(self) -> "Paths":
+    def ensure(self) -> Paths:
         for p in (
             self.data_dir, self.documents_dir, self.artifacts_dir,
             self.index_dir, self.models_dir, self.cache_dir, self.logs_dir,

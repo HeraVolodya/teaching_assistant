@@ -28,16 +28,16 @@ import re
 import unicodedata
 
 __all__ = [
-    "TEXT_PREPROC_VERSION",
     "APOSTROPHE",
-    "normalize_uk",
-    "tokenize",
-    "search_terms",
+    "TEXT_PREPROC_VERSION",
+    "cyrillic_ratio",
     "expand_compounds",
     "fix_homoglyphs",
-    "cyrillic_ratio",
     "has_unambiguous_cyrillic",
     "is_cyrillic",
+    "normalize_uk",
+    "search_terms",
+    "tokenize",
 ]
 
 # Версія конвеєра нормалізації. МАЄ збігатися з

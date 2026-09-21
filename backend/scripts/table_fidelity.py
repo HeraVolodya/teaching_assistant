@@ -63,16 +63,16 @@ from app.eval.table_metrics import (
 )
 
 __all__ = [
-    "TableCase",
     "DOCLING_MODES",
-    "load_grid",
+    "TableCase",
     "collect_cases",
-    "load_predictions",
-    "score_predictions",
-    "render_markdown",
     "docling_available",
     "extract_with_docling",
+    "load_grid",
+    "load_predictions",
     "main",
+    "render_markdown",
+    "score_predictions",
 ]
 
 TABLE_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
@@ -80,7 +80,9 @@ TABLE_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 # Режими, які має сенс порівнювати. Ключ → опції `ParseOptions` модуля приймання.
 DOCLING_MODES: dict[str, dict[str, Any]] = {
     "v1-accurate": {"table_mode": "ACCURATE", "do_cell_matching": True, "table_former_version": 1},
-    "v1-accurate-nocellmatch": {"table_mode": "ACCURATE", "do_cell_matching": False, "table_former_version": 1},
+    "v1-accurate-nocellmatch": {
+        "table_mode": "ACCURATE", "do_cell_matching": False, "table_former_version": 1,
+    },
     "v1-fast": {"table_mode": "FAST", "do_cell_matching": True, "table_former_version": 1},
     "v2-accurate": {"table_mode": "ACCURATE", "do_cell_matching": True, "table_former_version": 2},
 }
@@ -131,7 +133,7 @@ def collect_cases(gold_dir: Path, tables_dir: Path | None = None) -> tuple[list[
             continue
         try:
             grid = load_grid(path)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             warnings.append(f"Еталон {path.name} не прочитано: {exc}")
             continue
         if not grid:
@@ -152,7 +154,7 @@ def load_predictions(directory: Path) -> dict[str, Grid]:
             continue
         try:
             out[path.stem] = load_grid(path)
-        except Exception:  # noqa: BLE001, S110 — файл не таблиця; попередження вище за рівнем
+        except Exception:
             continue
     return out
 
@@ -221,7 +223,7 @@ def extract_with_docling(
     started = time.perf_counter()
     try:
         parsed = parse_document(case.source, ParseOptions(**kwargs))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return [], time.perf_counter() - started, f"{type(exc).__name__}: {exc}"
     seconds = time.perf_counter() - started
 
@@ -345,7 +347,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog="table_fidelity",
         description="Поклітинний F1 таблиць: TableFormer V1 ACCURATE ±do_cell_matching проти V2.",
     )
-    parser.add_argument("--gold", required=True, type=Path, help="Тека з еталонними таблицями (.csv/.md/.html).")
+    parser.add_argument("--gold", required=True, type=Path,
+                        help="Тека з еталонними таблицями (.csv/.md/.html).")
     parser.add_argument("--tables", type=Path, default=None, help="Тека зі сторінками для прогону Docling.")
     parser.add_argument(
         "--predictions", type=Path, nargs="*", default=[],

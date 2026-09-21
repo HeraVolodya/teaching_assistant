@@ -43,23 +43,23 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 __all__ = [
-    "Evidence",
-    "ClaimVerdict",
-    "GroundednessReport",
+    "JUDGE_SYSTEM_UK",
+    "PAIRWISE_SYSTEM_UK",
     "AbstentionReport",
     "CitationValidity",
-    "PairwiseVerdict",
+    "ClaimVerdict",
+    "Evidence",
+    "GroundednessReport",
     "Judge",
     "LexicalJudge",
     "LlmJudge",
-    "JUDGE_SYSTEM_UK",
-    "PAIRWISE_SYSTEM_UK",
-    "split_claims",
-    "create_judge",
-    "judge_answer",
+    "PairwiseVerdict",
     "abstention_stats",
     "citation_validity",
+    "create_judge",
+    "judge_answer",
     "pairwise_compare",
+    "split_claims",
     "summarize_groundedness",
 ]
 
@@ -83,7 +83,7 @@ class Evidence:
         return f"{head}\n{self.text}"
 
     @classmethod
-    def from_retrieved(cls, items: Sequence[Any]) -> list["Evidence"]:
+    def from_retrieved(cls, items: Sequence[Any]) -> list[Evidence]:
         """Побудувати докази з `list[RetrievedChunk]`.
 
         `ordinal_in_prompt` виставляє генератор; коли його ще немає (виклик до
@@ -363,7 +363,7 @@ class LlmJudge:
                 self.build_messages(claim, evidence), params=params, model=self.model
             ):
                 text += token
-        except Exception as exc:  # noqa: BLE001 — недоступність судді не має валити прогін
+        except Exception as exc:
             fallback = await self.fallback.verdict(claim, evidence)
             return ClaimVerdict(
                 fallback.claim, fallback.verdict, fallback.supported, fallback.score,

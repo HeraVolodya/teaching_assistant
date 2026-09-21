@@ -68,14 +68,17 @@ from app.backends.base import (
     Messages,
     ModelInfo,
     ModelLoadRefused,
-    NoChatModelReady,
     ModelNotLoaded,
+    NoChatModelReady,
     stream_with_idle_timeout,
 )
 
 __all__ = [
-    "LmStudioClient", "DEFAULT_PORTS", "lmstudio_config_path",
-    "read_configured_port", "candidate_base_urls",
+    "DEFAULT_PORTS",
+    "LmStudioClient",
+    "candidate_base_urls",
+    "lmstudio_config_path",
+    "read_configured_port",
 ]
 
 log = logging.getLogger("asistent.lmstudio")

@@ -61,13 +61,13 @@ from app.jobs.queue import JobCancelled, JobQueue, Lease
 
 __all__ = [
     "IngestReport",
-    "StageWeights",
     "PipelineError",
-    "resolve_document_path",
-    "ingest_document",
+    "StageWeights",
     "build_collection_index_job",
-    "reuse_cached_document",
     "content_sha256",
+    "ingest_document",
+    "resolve_document_path",
+    "reuse_cached_document",
 ]
 
 log = logging.getLogger("asistent.pipeline")
@@ -365,7 +365,7 @@ def _parse(path: Path, opts: Any, lease: Lease) -> Any:
             "Не вистачило пам'яті на обробку документа.",
             "Закрийте LM Studio на час індексації або розділіть файл на частини.",
         ) from exc
-    except Exception as exc:  # noqa: BLE001 — воркер не має права падати мовчки
+    except Exception as exc:
         raise PipelineError(
             "PARSE_FAILED",
             f"Не вдалося опрацювати документ: {exc}",
@@ -668,7 +668,7 @@ def _telemetry(db: Any, name: str, **kw: Any) -> None:
     try:
         with db.transaction() as con:
             TelemetryRepo(con).event(name, **kw)
-    except Exception:  # noqa: BLE001 — телеметрія не має права валити конвеєр
+    except Exception:
         log.debug("Не вдалося записати подію телеметрії %s", name, exc_info=True)
 
 

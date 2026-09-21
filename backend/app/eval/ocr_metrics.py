@@ -42,19 +42,19 @@ from functools import lru_cache
 from typing import Any
 
 __all__ = [
-    "CONFUSION_CLASSES",
     "APOSTROPHES",
-    "PageScore",
+    "CONFUSION_CLASSES",
     "EngineReport",
-    "edit_distance",
-    "cer",
-    "wer",
-    "align_pairs",
-    "confusion_counts",
-    "score_page",
+    "PageScore",
     "aggregate",
-    "report_rows",
+    "align_pairs",
+    "cer",
+    "confusion_counts",
+    "edit_distance",
     "normalize_for_scoring",
+    "report_rows",
+    "score_page",
+    "wer",
 ]
 
 # Усі варіанти апострофа, які трапляються в українських текстах і в OCR-виводі.
@@ -272,7 +272,9 @@ def align_pairs(reference: str, hypothesis: str) -> list[tuple[str, str]]:
     return out
 
 
-def confusion_counts(reference: str, hypothesis: str, **norm: Any) -> tuple[Counter[str], Counter[tuple[str, str]]]:
+def confusion_counts(
+    reference: str, hypothesis: str, **norm: Any
+) -> tuple[Counter[str], Counter[tuple[str, str]]]:
     """(лічильник іменованих класів, лічильник сирих підстановок).
 
     Апостроф рахується і як підстановка (`'` → `’`), і як вилучення

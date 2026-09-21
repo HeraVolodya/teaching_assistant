@@ -24,12 +24,30 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
 
 __all__ = [
-    "Role", "Message", "Messages", "ChatParams", "LoadConfig", "ModelInfo", "BackendHealth",
-    "LlmBackend", "LlmError", "LlmUnavailable", "LlmTimeout", "ModelLoadRefused",
-    "ModelNotLoaded", "LlmCancelled", "LlmProtocolError",
-    "CONNECT_TIMEOUT_S", "LOAD_TIMEOUT_S", "TTFT_COLD_S", "TTFT_WARM_S",
-    "IDLE_BETWEEN_TOKENS_S", "CONTEXT_LADDER", "DEFAULT_STOP",
-    "stream_with_idle_timeout", "join_messages",
+    "CONNECT_TIMEOUT_S",
+    "CONTEXT_LADDER",
+    "DEFAULT_STOP",
+    "IDLE_BETWEEN_TOKENS_S",
+    "LOAD_TIMEOUT_S",
+    "TTFT_COLD_S",
+    "TTFT_WARM_S",
+    "BackendHealth",
+    "ChatParams",
+    "LlmBackend",
+    "LlmCancelled",
+    "LlmError",
+    "LlmProtocolError",
+    "LlmTimeout",
+    "LlmUnavailable",
+    "LoadConfig",
+    "Message",
+    "Messages",
+    "ModelInfo",
+    "ModelLoadRefused",
+    "ModelNotLoaded",
+    "Role",
+    "join_messages",
+    "stream_with_idle_timeout",
 ]
 
 Role = Literal["system", "user", "assistant"]
@@ -149,11 +167,9 @@ class ModelLoadRefused(LlmError):
         # НЕ входить: він стоїть у кожній відмові й нічого не розрізняє.
         bad_request = ("invalid_arguments", "invalid model name", "unrecognized_keys",
                        "model not found", "unknown model", "no such model")
-        if any(m in lowered for m in bad_request):
-            return False
-        # Невідома причина: пробуємо менший контекст. Одна зайва спроба дешевша
-        # за хибну впевненість у діагнозі.
-        return True
+        # Якщо це не зіпсований запит — причина невідома, і тоді пробуємо менший
+        # контекст: одна зайва спроба дешевша за хибну впевненість у діагнозі.
+        return not any(m in lowered for m in bad_request)
 
 
 class NoChatModelReady(LlmError):

@@ -52,18 +52,18 @@ import numpy as np
 from app.db.repositories import ChunkRepo, CollectionRepo, blob_to_vector
 
 __all__ = [
-    "SCHEMA_VERSION",
     "INDEX_LAYOUT_VERSION",
-    "IndexParams",
-    "SearchHit",
+    "SCHEMA_VERSION",
     "BuildReport",
-    "VectorIndex",
     "CollectionIndex",
     "ExactVectors",
-    "usearch_available",
+    "IndexParams",
+    "SearchHit",
+    "VectorIndex",
+    "build_collection_index",
     "compute_build_id",
     "index_path_for",
-    "build_collection_index",
+    "usearch_available",
 ]
 
 # Версія схеми БД, що входить у build_id: зміна схеми чанків робить старий граф

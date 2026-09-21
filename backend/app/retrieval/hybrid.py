@@ -63,16 +63,16 @@ from app.retrieval import diversity, fusion, reorder
 from app.retrieval.vector_index import CollectionIndex, IndexParams
 
 __all__ = [
+    "DEFAULT_CONTEXT_CHAR_BUDGET",
+    "EXACT_SELECTIVITY_THRESHOLD",
+    "HybridRetriever",
     "MetadataFilter",
     "QueryTerms",
     "RerankerLike",
-    "HybridRetriever",
-    "fts_term",
-    "build_match_expression",
     "analyze_query",
+    "build_match_expression",
     "char_ngram_scores",
-    "EXACT_SELECTIVITY_THRESHOLD",
-    "DEFAULT_CONTEXT_CHAR_BUDGET",
+    "fts_term",
 ]
 
 # Нижче цієї селективності ANN поступається точному скану (стратегія L2).

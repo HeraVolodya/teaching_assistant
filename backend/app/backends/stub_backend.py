@@ -30,7 +30,7 @@ from app.backends.base import (
     ModelNotLoaded,
 )
 
-__all__ = ["StubBackend", "STUB_MODEL_KEY", "is_stub_enabled"]
+__all__ = ["STUB_MODEL_KEY", "StubBackend", "is_stub_enabled"]
 
 STUB_MODEL_KEY = "asistent-stub-uk"
 

@@ -56,8 +56,8 @@ def test_eta_uses_median_not_mean() -> None:
     tracker = ProgressTracker(total_weight=1000.0, window=8)
     # Сім швидких сторінок і одна аномально повільна.
     for _ in range(7):
-        tracker._samples.append(0.1)            # noqa: SLF001 — навмисна інспекція
-    tracker._samples.append(20.0)               # noqa: SLF001
+        tracker._samples.append(0.1)
+    tracker._samples.append(20.0)
     tracker.done = 900.0
     rate = tracker.seconds_per_weight
     assert rate is not None and rate < 1.0      # медіана ≈ 0.1, середнє було б ≈ 2.6

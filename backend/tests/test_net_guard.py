@@ -68,9 +68,8 @@ def test_socket_connect_to_loopback_is_not_blocked_by_the_guard() -> None:
 
 def test_httpx_is_blocked_if_installed() -> None:
     httpx = pytest.importorskip("httpx")
-    with httpx.Client(timeout=1.0) as c:
-        with pytest.raises(net_guard.OutboundNetworkBlocked):
-            c.get("https://huggingface.co/api/models")
+    with httpx.Client(timeout=1.0) as c, pytest.raises(net_guard.OutboundNetworkBlocked):
+        c.get("https://huggingface.co/api/models")
 
 
 def test_install_sets_offline_env_vars() -> None:

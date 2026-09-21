@@ -30,6 +30,8 @@
 
 from __future__ import annotations
 
+import contextlib
+
 from app import net_guard
 
 # Гард ставиться ПЕРШИМ ділом у процесі, до будь-якого імпорту, що створює
@@ -54,7 +56,7 @@ from app.settings import Settings, get_settings  # noqa: E402
 # `app.jobs.exit_codes`: коли він визначався тут, супервізор імпортував його
 # з `app.worker`, а `app.worker` через `app.jobs.runner` тягнув пакет
 # `app.jobs`, який імпортував супервізор — цикл.
-__all__ = ["RECYCLE_EXIT_CODE", "WorkerStop", "run_worker", "main"]
+__all__ = ["RECYCLE_EXIT_CODE", "WorkerStop", "main", "run_worker"]
 
 log = logging.getLogger("asistent.worker")
 
@@ -95,11 +97,9 @@ def _install_signal_handlers(state: dict[str, bool]) -> None:
         state["stop"] = True
 
     for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
+        # Не головний потік або платформа без сигналу — не критично.
+        with contextlib.suppress(ValueError, OSError):
             signal.signal(sig, handler)
-        except (ValueError, OSError):
-            # Не головний потік або платформа без сигналу — не критично.
-            pass
 
 
 def run_worker(
@@ -155,7 +155,7 @@ def run_worker(
     finally:
         try:
             db.close()
-        except Exception:  # noqa: BLE001 — вихід не має падати на закритті
+        except Exception:
             log.debug("Помилка закриття БД воркера", exc_info=True)
     return 0
 

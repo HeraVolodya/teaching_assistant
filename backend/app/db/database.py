@@ -136,7 +136,7 @@ class Database:
                 con.execute("PRAGMA optimize")
                 # Перед закриттям — обов'язково, інакше дані лишаться у WAL.
                 con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            except Exception:  # noqa: BLE001 — закриття не має падати
+            except Exception:
                 pass
             finally:
                 con.close()

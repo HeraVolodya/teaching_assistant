@@ -59,20 +59,20 @@ from typing import Any, Protocol, runtime_checkable
 import numpy as np
 
 __all__ = [
-    "Reranker",
-    "RerankScoring",
-    "RerankModel",
-    "REGISTRY",
     "DEFAULT_MODEL_ID",
+    "MODEL_ENV",
+    "REGISTRY",
+    "STUB_ENV",
+    "OnnxReranker",
+    "RerankModel",
+    "RerankScoring",
+    "Reranker",
+    "StubReranker",
+    "build_qwen_pair",
+    "create_reranker",
     "get",
     "model_key",
-    "StubReranker",
-    "OnnxReranker",
-    "create_reranker",
-    "build_qwen_pair",
     "plan_pair_batches",
-    "STUB_ENV",
-    "MODEL_ENV",
 ]
 
 log = logging.getLogger(__name__)

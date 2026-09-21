@@ -80,7 +80,7 @@ class Services:
                     stub=self.settings.stub,
                     models_dir=self.paths.models_dir,
                 )
-            except Exception as exc:  # noqa: BLE001 — див. докстрінг модуля
+            except Exception as exc:
                 self._note(
                     "EMBEDDER_MISSING",
                     f"Модель ембедингів недоступна: {exc}",
@@ -105,7 +105,7 @@ class Services:
                     stub=self.settings.stub,
                     models_dir=self.paths.models_dir,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self._note(
                     "RERANKER_MISSING",
                     f"Реранкер недоступний: {exc}",
@@ -150,7 +150,7 @@ class Services:
 
             try:
                 self._backend = await get_backend(base_url=self.settings.lmstudio_url)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 self._note(
                     "LMSTUDIO_UNAVAILABLE",
                     f"LM Studio недоступний: {exc}",
@@ -201,7 +201,7 @@ class Services:
                         for m in health.models
                     ],
                 }
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 payload = {"ok": False, "detail": str(exc), "apiVersion": "none", "models": []}
         self._health_cache = (now, payload)
         return payload
@@ -229,12 +229,12 @@ class Services:
                     result = closer()
                     if asyncio.iscoroutine(result):
                         result.close()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     log.debug("Помилка закриття %s", name, exc_info=True)
         self.events.close()
         try:
             self.db.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.debug("Помилка закриття БД", exc_info=True)
 
 

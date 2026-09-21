@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import subprocess
@@ -31,10 +32,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-from app.settings import Settings
 from app.jobs.exit_codes import RECYCLE_EXIT_CODE
+from app.settings import Settings
 
-__all__ = ["Supervisor", "ProcessSupervisor", "InlineSupervisor", "create_supervisor"]
+__all__ = ["InlineSupervisor", "ProcessSupervisor", "Supervisor", "create_supervisor"]
 
 log = logging.getLogger("asistent.supervisor")
 
@@ -145,10 +146,8 @@ class ProcessSupervisor:
         self._stopping = True
         if self._task is not None:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
             self._task = None
         for proc in self._procs:
             if proc.poll() is None:
@@ -158,7 +157,7 @@ class ProcessSupervisor:
             remaining = max(0.0, deadline - time.monotonic())
             try:
                 await asyncio.to_thread(proc.wait, remaining or 0.1)
-            except Exception:  # noqa: BLE001 — таймаут очікування
+            except Exception:
                 log.warning("Воркер pid=%s не завершився чемно — вбиваю.", proc.pid)
                 proc.kill()
         self._procs.clear()
@@ -214,17 +213,15 @@ class InlineSupervisor:
                 await asyncio.sleep(self.settings.worker_poll_interval_s)
         except asyncio.CancelledError:  # pragma: no cover
             raise
-        except Exception:  # noqa: BLE001 — inline-воркер не має валити API
+        except Exception:
             log.exception("Inline-воркер зупинився через помилку")
 
     async def stop(self) -> None:
         self._stopping = True
         if self._task is not None:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
             self._task = None
 
     def status(self) -> dict[str, Any]:

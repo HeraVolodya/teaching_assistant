@@ -22,6 +22,7 @@ ETA рахується ТУТ, бо в БД його немає: беремо ш
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -68,10 +69,8 @@ class JobWatcher:
         self._stopping = True
         if self._task is not None:
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
             self._task = None
 
     # ------------------------------------------------------------ цикл
@@ -81,7 +80,7 @@ class JobWatcher:
                 await asyncio.sleep(self.interval)
                 try:
                     await asyncio.to_thread(self.poll)
-                except Exception:  # noqa: BLE001 — спостерігач не валить API
+                except Exception:
                     log.debug("Помилка опитування черги", exc_info=True)
         except asyncio.CancelledError:  # pragma: no cover
             raise

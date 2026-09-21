@@ -274,7 +274,7 @@ def reingest_document(
     """
     services = services_of(request)
     document = _get_document(services, document_id)
-    mode = _parse_mode((payload.mode if payload else "FAST"))
+    mode = _parse_mode(payload.mode if payload else "FAST")
 
     services.queue.cancel_document(document_id)
     with services.db.transaction() as con:

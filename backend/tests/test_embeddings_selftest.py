@@ -113,7 +113,7 @@ def test_reference_is_keyed_by_model_so_models_coexist(reference: Path) -> None:
 def test_lost_normalisation_is_detected(reference: Path) -> None:
     provider = create_provider(stub=True)
 
-    def unnormalised(texts, *, side):  # noqa: ANN001, ANN202 — локальна диверсія
+    def unnormalised(texts, *, side):
         return np.full((len(texts), provider.dim), 3.0, dtype=np.float32)
 
     provider._encode_formatted = unnormalised          # type: ignore[assignment]
@@ -178,7 +178,7 @@ def test_truncation_of_a_hard_cap_chunk_is_visible(reference: Path) -> None:
 def test_broken_provider_yields_a_report_not_a_traceback(reference: Path) -> None:
     provider = create_provider(stub=True)
 
-    def boom(texts, *, side):  # noqa: ANN001, ANN202
+    def boom(texts, *, side):
         raise RuntimeError("сесія ONNX впала")
 
     provider._encode_formatted = boom                   # type: ignore[assignment]

@@ -68,7 +68,7 @@ async def test_chat_frames_also_land_on_the_shared_channel(tmp_path) -> None:
     самий хід.
     """
     settings = make_settings(tmp_path, worker_mode="inline")
-    async with api_client(settings) as (client, application):
+    async with api_client(settings) as (client, _application):
         _assistant, _collection_id, session = await _ready_assistant(client)
         response = await client.post("/api/chat", json={
             "sessionId": session["id"], "message": "Що таке деривація снаряда?",
@@ -114,7 +114,7 @@ async def test_invented_marker_is_stripped_and_logged(tmp_path) -> None:
     settings = make_settings(tmp_path, worker_mode="inline")
     async with api_client(settings) as (client, application):
         _assistant, _collection_id, session = await _ready_assistant(client)
-        application.state.services._backend = _ScriptedBackend(   # noqa: SLF001
+        application.state.services._backend = _ScriptedBackend(
             "Деривація [1] залежить від обертання [42] снаряда."
         )
         response = await client.post("/api/chat", json={
@@ -140,7 +140,7 @@ async def test_stored_answer_is_the_cleaned_text(tmp_path) -> None:
     settings = make_settings(tmp_path, worker_mode="inline")
     async with api_client(settings) as (client, application):
         _assistant, _collection_id, session = await _ready_assistant(client)
-        application.state.services._backend = _ScriptedBackend(   # noqa: SLF001
+        application.state.services._backend = _ScriptedBackend(
             "Відповідь [1] і вигадка [77]."
         )
         response = await client.post("/api/chat", json={
@@ -228,7 +228,7 @@ async def test_backend_failure_becomes_a_chat_error_frame(tmp_path) -> None:
 
     async with api_client(settings) as (client, application):
         _assistant, _collection_id, session = await _ready_assistant(client)
-        application.state.services._backend = _Broken("")   # noqa: SLF001
+        application.state.services._backend = _Broken("")
         response = await client.post("/api/chat", json={
             "sessionId": session["id"], "message": "Що таке деривація снаряда?",
         })
@@ -248,7 +248,7 @@ async def test_lmstudio_absent_is_reported_not_hidden(tmp_path) -> None:
         _assistant, _collection_id, session = await _ready_assistant(client)
         # `False` — це стан «шукали й не знайшли»: повторних спроб не буде,
         # рівно як після невдалого автовиявлення.
-        application.state.services._backend = False        # noqa: SLF001
+        application.state.services._backend = False
 
         response = await client.post("/api/chat", json={
             "sessionId": session["id"], "message": "Що таке деривація снаряда?",

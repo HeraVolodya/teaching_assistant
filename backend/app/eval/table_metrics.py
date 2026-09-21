@@ -36,15 +36,15 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
+    "EMPTY_CELL_REPAIR_THRESHOLD",
     "Grid",
     "TableScore",
-    "normalize_cell",
     "cell_f1",
-    "score_table",
-    "load_grid_csv",
-    "grid_from_markdown",
     "grid_from_html",
-    "EMPTY_CELL_REPAIR_THRESHOLD",
+    "grid_from_markdown",
+    "load_grid_csv",
+    "normalize_cell",
+    "score_table",
 ]
 
 # Тригер VLM-ремонту сторінки з плану, §1.

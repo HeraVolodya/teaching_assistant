@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 
 import pytest
+from helpers_retrieval import build_corpus
 
 from app.domain import Chunk, ChunkLevel
 from app.eval import gold_set as G
-from helpers_retrieval import build_corpus
 
 
 # ------------------------------------------------------------------ значення

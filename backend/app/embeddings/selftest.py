@@ -50,16 +50,16 @@ from app.embeddings.provider import (
 )
 
 __all__ = [
+    "NORM_TOLERANCE",
+    "NO_BOOTSTRAP_ENV",
+    "REFERENCE_COS_MIN",
+    "REFERENCE_ENV",
+    "REFERENCE_PASSAGE",
+    "REFERENCE_QUESTION",
     "CheckResult",
     "SelfTestReport",
-    "run_selftest",
     "default_reference_path",
-    "REFERENCE_QUESTION",
-    "REFERENCE_PASSAGE",
-    "REFERENCE_COS_MIN",
-    "NORM_TOLERANCE",
-    "REFERENCE_ENV",
-    "NO_BOOTSTRAP_ENV",
+    "run_selftest",
 ]
 
 log = logging.getLogger(__name__)
@@ -253,7 +253,7 @@ def run_selftest(
         if isinstance(provider, BaseEmbeddingProvider):
             report.truncated_inputs = provider.stats.truncated
             report.max_tokens_seen = provider.stats.max_tokens_seen
-    except Exception as exc:                # noqa: BLE001 — звіт важливіший за трейсбек
+    except Exception as exc:
         report.error = f"{type(exc).__name__}: {exc}"
         log.exception("Самотест ембедера не виконано")
     finally:

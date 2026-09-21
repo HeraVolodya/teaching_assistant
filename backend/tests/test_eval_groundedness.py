@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from helpers_retrieval import build_corpus
 
 from app.eval import gold_set as G
 from app.eval import groundedness as GR
-from helpers_retrieval import build_corpus
 
 EVIDENCE = [
     GR.Evidence(

@@ -50,21 +50,21 @@ from typing import Literal
 import numpy as np
 
 __all__ = [
-    "AbstentionCalibration",
-    "AbstentionDecision",
-    "CalibrationStore",
-    "CalibrationSample",
-    "N_FEATURES",
-    "RIDGE_LAMBDA",
+    "CALIBRATION_DIR_ENV",
     "MIN_CALIBRATION_QUERIES",
     "MIN_USEFUL_NDCG",
-    "CALIBRATION_DIR_ENV",
+    "N_FEATURES",
+    "RIDGE_LAMBDA",
+    "AbstentionCalibration",
+    "AbstentionDecision",
+    "CalibrationSample",
+    "CalibrationStore",
+    "calibrate_threshold",
+    "decide",
     "features_from_scores",
     "fit_ridge",
     "fit_u_lin",
-    "calibrate_threshold",
     "ndcg_at_k",
-    "decide",
 ]
 
 log = logging.getLogger(__name__)

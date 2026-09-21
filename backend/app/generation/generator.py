@@ -63,7 +63,7 @@ from app.generation.prompt_builder import (
     generation_params,
 )
 
-__all__ = ["Generator", "CancelToken"]
+__all__ = ["CancelToken", "Generator"]
 
 
 class CancelToken:

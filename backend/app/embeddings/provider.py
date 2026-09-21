@@ -32,15 +32,15 @@ from app.embeddings import registry
 from app.embeddings.registry import UK_RETRIEVAL_TASK, EmbeddingModel
 
 __all__ = [
-    "EmbeddingProvider",
+    "STUB_ENV",
     "BaseEmbeddingProvider",
+    "EmbeddingProvider",
     "EncodeStats",
     "Side",
-    "STUB_ENV",
     "create_provider",
-    "stub_enabled",
-    "l2_normalize",
     "default_model_dir",
+    "l2_normalize",
+    "stub_enabled",
 ]
 
 Side = Literal["query", "document"]
@@ -233,8 +233,12 @@ class BaseEmbeddingProvider(ABC):
     def embed_documents(self, texts: list[str]) -> np.ndarray:
         return self.encode(list(texts), side="document")
 
-    def close(self) -> None:
-        """Звільнити сесію. Заглушці нічого звільняти."""
+    def close(self) -> None:  # noqa: B027 — свідомо НЕ абстрактний
+        """Звільнити сесію. Заглушці нічого звільняти.
+
+        Порожня реалізація навмисна: більшість провайдерів не тримають ресурсів,
+        і вимагати від кожного писати `pass` означало б шум без користі.
+        """
 
 
 # ------------------------------------------------------------------- фабрика

@@ -170,7 +170,7 @@ def test_process_supervisor_command_carries_utf8_and_recycle_limit(tmp_path, mon
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     supervisor = ProcessSupervisor(settings)
-    supervisor._spawn()  # noqa: SLF001
+    supervisor._spawn()
 
     assert "-X" in captured["cmd"] and "utf8" in captured["cmd"]
     assert captured["cmd"][-2:] == ["--max-jobs", "7"]
@@ -230,7 +230,7 @@ async def test_watcher_turns_db_rows_into_events(tmp_path) -> None:
         DocumentRepo(con).create(document)
 
     watcher = JobWatcher(services, interval=0.01)
-    watcher._prime()  # noqa: SLF001
+    watcher._prime()
 
     job_id = queue.enqueue(JobType.PARSE, document_id=document.id,
                            collection_id=collection.id, weight_total=100.0)
@@ -281,7 +281,7 @@ def test_watcher_priming_prevents_replaying_yesterdays_work(tmp_path) -> None:
         ))
 
     watcher = JobWatcher(services, interval=0.01)
-    watcher._prime()  # noqa: SLF001
+    watcher._prime()
     watcher.poll()
     assert [e for e in services.events.history() if e.type == "doc.ready"] == []
     services.close()

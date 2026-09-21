@@ -50,7 +50,7 @@ from app.jobs.supervisor import create_supervisor  # noqa: E402
 from app.net_guard import OutboundNetworkBlocked  # noqa: E402
 from app.settings import Settings, get_settings  # noqa: E402
 
-__all__ = ["create_app", "app"]
+__all__ = ["app", "create_app"]
 
 log = logging.getLogger("asistent.api")
 

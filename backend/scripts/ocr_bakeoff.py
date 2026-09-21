@@ -43,20 +43,20 @@ from app.eval import metrics as M
 from app.eval.ocr_metrics import EngineReport, PageScore, aggregate, report_rows, score_page
 
 __all__ = [
-    "PagePair",
-    "EngineStatus",
-    "OcrEngine",
-    "TesseractEngine",
-    "RapidOcrEngine",
-    "AppleVisionEngine",
-    "LmStudioVlmEngine",
     "ENGINE_FACTORIES",
+    "AppleVisionEngine",
+    "EngineStatus",
+    "LmStudioVlmEngine",
+    "OcrEngine",
+    "PagePair",
+    "RapidOcrEngine",
+    "TesseractEngine",
     "collect_pairs",
     "discover_engines",
-    "run_bakeoff",
-    "render_markdown",
-    "write_csv",
     "main",
+    "render_markdown",
+    "run_bakeoff",
+    "write_csv",
 ]
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
@@ -122,7 +122,7 @@ class TesseractEngine:
             langs = subprocess.run(
                 [self.binary, "--list-langs"], capture_output=True, text=True, timeout=30, check=False
             ).stdout
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return EngineStatus(False, f"Не вдалося опитати мови: {exc}")
         if self.lang not in langs.split():
             return EngineStatus(
@@ -177,7 +177,7 @@ class RapidOcrEngine:
         for name, kwargs in attempts:
             try:
                 engine = RapidOCR(**kwargs)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 errors.append(f"{name}: {type(exc).__name__}: {exc}")
                 continue
             self._signature = name
@@ -193,7 +193,7 @@ class RapidOcrEngine:
             self._engine = self._build()
         except ImportError as exc:
             return EngineStatus(False, f"Пакет rapidocr не встановлено ({exc}). pip install .[worker]")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return EngineStatus(False, str(exc))
         return EngineStatus(True, f"конструктор: {self._signature}")
 
@@ -289,7 +289,7 @@ class LmStudioVlmEngine:
             return EngineStatus(False, f"httpx недоступний ({exc}).")
         try:
             response = httpx.get(f"{self.base_url}/v1/models", timeout=2.0)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             return EngineStatus(False, f"LM Studio не відповідає на {self.base_url}: {exc}")
         if response.status_code != 200:
             return EngineStatus(False, f"LM Studio відповів {response.status_code}.")
@@ -364,7 +364,7 @@ def discover_engines(
         engine = LmStudioVlmEngine(model=vlm_model) if key == "paddleocr-vl-lmstudio" else factory()
         try:
             status = engine.status()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             status = EngineStatus(False, f"{type(exc).__name__}: {exc}")
         out.append((engine, status))
     return out
@@ -482,7 +482,7 @@ def run_bakeoff(
             text = ""
             try:
                 text = engine.recognize(pair.image)
-            except Exception as exc:  # noqa: BLE001 — один збій не валить бейк-оф
+            except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
             seconds = time.perf_counter() - started
             score = score_page(

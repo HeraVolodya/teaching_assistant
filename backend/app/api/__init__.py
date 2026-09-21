@@ -14,4 +14,4 @@ from __future__ import annotations
 from app.api.events import EventBus, sse_frame
 from app.api.state import Services, build_services
 
-__all__ = ["EventBus", "sse_frame", "Services", "build_services"]
+__all__ = ["EventBus", "Services", "build_services", "sse_frame"]

@@ -214,7 +214,7 @@ class _FakeSession:
     def get_providers(self) -> list[str]:
         return ["CPUExecutionProvider"]
 
-    def run(self, _outputs, feeds: dict[str, np.ndarray]):  # noqa: ANN001
+    def run(self, _outputs, feeds: dict[str, np.ndarray]):
         self.seen.append({k: v.copy() for k, v in feeds.items()})
         ids = feeds["input_ids"].astype(np.float64)
         prefix = np.cumsum(ids * feeds["attention_mask"], axis=1)

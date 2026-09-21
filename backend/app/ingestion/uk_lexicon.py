@@ -23,10 +23,10 @@ from __future__ import annotations
 from app.ingestion.normalize_uk import is_cyrillic
 
 __all__ = [
-    "STOPWORDS",
-    "LEXICON_WORDS",
     "LEXICON_STEMS",
+    "LEXICON_WORDS",
     "MIN_STEM",
+    "STOPWORDS",
     "is_known_word",
     "lexicon_hit_rate",
 ]

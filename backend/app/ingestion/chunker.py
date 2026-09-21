@@ -47,19 +47,19 @@ from app.ingestion.docling_pipeline import (
 from app.ingestion.normalize_uk import search_terms
 
 __all__ = [
+    "BLOCK_PLACEHOLDER_RE",
+    "QWEN_UK_FERTILITY",
     "ChunkConfig",
     "ChunkTree",
+    "build_chapters",
+    "calibrate_ch_per_tok",
     "chunk_document",
     "chunk_document_tree",
     "chunk_markdown",
-    "build_chapters",
-    "simhash64",
     "hamming64",
-    "calibrate_ch_per_tok",
     "header_path_of",
     "sanitize_display",
-    "QWEN_UK_FERTILITY",
-    "BLOCK_PLACEHOLDER_RE",
+    "simhash64",
 ]
 
 

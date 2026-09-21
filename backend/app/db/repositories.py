@@ -15,22 +15,46 @@ from typing import Any
 import numpy as np
 
 from app.domain import (
-    Assistant, AssistantConfig, BBox, Chapter, Chunk, ChunkLevel, Collection,
-    DocStatus, Document, IngestMode, JobState, JobType, OcrModeName, PageClass,
-    PageInfo, QualityGrade, new_id, utcnow,
+    Assistant,
+    AssistantConfig,
+    BBox,
+    Chapter,
+    Chunk,
+    ChunkLevel,
+    Collection,
+    DocStatus,
+    Document,
+    IngestMode,
+    JobState,
+    JobType,
+    OcrModeName,
+    PageClass,
+    PageInfo,
+    QualityGrade,
+    new_id,
+    utcnow,
 )
 
 __all__ = [
-    "AssistantRepo", "CollectionRepo", "DocumentRepo", "PageRepo", "ChapterRepo",
-    "ChunkRepo", "JobRepo", "ChatRepo", "TelemetryRepo", "vector_to_blob", "blob_to_vector",
+    "AssistantRepo",
+    "ChapterRepo",
+    "ChatRepo",
+    "ChunkRepo",
+    "CollectionRepo",
+    "DocumentRepo",
+    "JobRepo",
+    "PageRepo",
+    "TelemetryRepo",
+    "blob_to_vector",
+    "vector_to_blob",
 ]
 
 
-def vector_to_blob(vec: "np.ndarray") -> bytes:
+def vector_to_blob(vec: np.ndarray) -> bytes:
     return np.asarray(vec, dtype="<f2").tobytes()
 
 
-def blob_to_vector(blob: bytes, dim: int) -> "np.ndarray":
+def blob_to_vector(blob: bytes, dim: int) -> np.ndarray:
     return np.frombuffer(blob, dtype="<f2", count=dim).astype(np.float32)
 
 
@@ -300,12 +324,12 @@ class ChunkRepo(_Repo):
             self.con.execute("DELETE FROM code_fts WHERE rowid=?", (chunk_id,))
             self.con.execute("INSERT INTO code_fts (rowid,codes) VALUES (?,?)", (chunk_id, codes))
 
-    def set_embedding(self, chunk_id: int, vector: "np.ndarray", model_key: str) -> None:
+    def set_embedding(self, chunk_id: int, vector: np.ndarray, model_key: str) -> None:
         self.con.execute(
             "UPDATE chunks SET embedding=?, embedding_model_key=? WHERE id=?",
             (vector_to_blob(vector), model_key, chunk_id))
 
-    def set_embeddings(self, items: Sequence[tuple[int, "np.ndarray"]], model_key: str) -> None:
+    def set_embeddings(self, items: Sequence[tuple[int, np.ndarray]], model_key: str) -> None:
         self.con.executemany(
             "UPDATE chunks SET embedding=?, embedding_model_key=? WHERE id=?",
             [(vector_to_blob(v), model_key, cid) for cid, v in items])

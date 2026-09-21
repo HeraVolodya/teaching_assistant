@@ -32,7 +32,7 @@ def _frames(body: str, kind: str) -> list[dict]:
 
 async def test_end_to_end_question_returns_cited_answer(tmp_path) -> None:
     settings = make_settings(tmp_path, worker_mode="inline")
-    async with api_client(settings) as (client, application):
+    async with api_client(settings) as (client, _application):
         # --- 1. асистент -------------------------------------------------
         assistant = await create_assistant(
             client, "Артилерія", instructions="Ти асистент кафедри артилерії."
@@ -224,8 +224,8 @@ async def test_chat_survives_missing_embedder(tmp_path, monkeypatch) -> None:
             "/api/sessions", json={"assistantId": assistant["id"]}
         )).json()
         # Імітуємо стан «ваг немає»: провайдер не створився.
-        application.state.services._provider = False   # noqa: SLF001
-        application.state.services._retriever = None   # noqa: SLF001
+        application.state.services._provider = False
+        application.state.services._retriever = None
 
         response = await client.post("/api/chat", json={
             "sessionId": session["id"], "message": "Що таке деривація?",

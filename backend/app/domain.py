@@ -15,16 +15,35 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal
 
 __all__ = [
-    "ChunkLevel", "PageClass", "OcrModeName", "DocStatus", "JobType", "JobState",
-    "IngestMode", "QualityGrade", "BBox", "PageInfo", "Chapter", "Chunk",
-    "Document", "Collection", "Assistant", "AssistantConfig", "RetrievedChunk",
-    "RetrievalDebug", "Citation", "AnswerChunk", "GenerationResult",
-    "new_id", "chunk_uid_for", "utcnow",
+    "AnswerChunk",
+    "Assistant",
+    "AssistantConfig",
+    "BBox",
+    "Chapter",
+    "Chunk",
+    "ChunkLevel",
+    "Citation",
+    "Collection",
+    "DocStatus",
+    "Document",
+    "GenerationResult",
+    "IngestMode",
+    "JobState",
+    "JobType",
+    "OcrModeName",
+    "PageClass",
+    "PageInfo",
+    "QualityGrade",
+    "RetrievalDebug",
+    "RetrievedChunk",
+    "chunk_uid_for",
+    "new_id",
+    "utcnow",
 ]
 
 
@@ -33,7 +52,7 @@ def new_id() -> str:
 
 
 def utcnow() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def chunk_uid_for(document_id: str, ordinal: int, text: str) -> str:
@@ -96,7 +115,7 @@ class QualityGrade(str, Enum):
     EXCELLENT = "EXCELLENT"
 
     @classmethod
-    def from_score(cls, score: float) -> "QualityGrade":
+    def from_score(cls, score: float) -> QualityGrade:
         if score < 0.5:
             return cls.POOR
         if score < 0.8:
@@ -143,7 +162,7 @@ class BBox:
                 "r": self.right, "b": self.bottom}
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "BBox":
+    def from_dict(cls, d: dict[str, Any]) -> BBox:
         return cls(page=int(d["page"]), left=float(d["l"]), top=float(d["t"]),
                    right=float(d["r"]), bottom=float(d["b"]))
 
@@ -175,10 +194,11 @@ class PageInfo:
             return True
         if self.table_score is not None and self.table_score < 0.5:
             return True
-        if (self.lexicon_hit_rate is not None and self.lexicon_hit_rate < 0.45
-                and (self.cyrillic_ratio or 0) > 0.3):
-            return True
-        return False
+        return bool(
+            self.lexicon_hit_rate is not None
+            and self.lexicon_hit_rate < 0.45
+            and (self.cyrillic_ratio or 0) > 0.3
+        )
 
 
 @dataclass(slots=True)
@@ -364,7 +384,7 @@ class AssistantConfig:
         return json.dumps(asdict(self), ensure_ascii=False)
 
     @classmethod
-    def from_json(cls, raw: str) -> "AssistantConfig":
+    def from_json(cls, raw: str) -> AssistantConfig:
         data = json.loads(raw) if raw else {}
         known = {f for f in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in data.items() if k in known})

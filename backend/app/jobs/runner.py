@@ -119,7 +119,7 @@ class JobRunner:
         except PipelineError as exc:
             log.warning("Завдання %s провалилось [%s]: %s", job.id, exc.code, exc)
             self._fail(job, exc.code, str(exc), exc.hint)
-        except Exception as exc:  # noqa: BLE001 — див. докстрінг модуля
+        except Exception as exc:
             detail = traceback.format_exc(limit=12)
             log.error("Завдання %s впало неочікувано: %s\n%s", job.id, exc, detail)
             self._fail(
@@ -207,7 +207,7 @@ class JobRunner:
                 DocumentRepo(con).set_status(
                     document_id, status, error_code=code, error_detail=detail
                 )
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("Не вдалося оновити статус документа %s", document_id)
 
 

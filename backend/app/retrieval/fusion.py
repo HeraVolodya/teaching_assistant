@@ -30,11 +30,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 __all__ = [
-    "Ranked",
-    "FusionWeights",
-    "FusedCandidate",
-    "DEFAULT_RRF_K",
     "ANCHORED_SPARSE_WEIGHT",
+    "DEFAULT_RRF_K",
+    "FusedCandidate",
+    "FusionWeights",
+    "Ranked",
     "has_lexical_anchor",
     "resolve_weights",
     "weighted_rrf",

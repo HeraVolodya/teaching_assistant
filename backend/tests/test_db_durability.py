@@ -56,7 +56,7 @@ def test_explicit_checkpoint_flushes_wal(tmp_path: Path) -> None:
     with db.transaction() as con:
         AssistantRepo(con).create(Assistant(id=new_id(), name="Балістика"))
 
-    busy, log_pages, checkpointed = db.checkpoint()
+    busy, _log_pages, checkpointed = db.checkpoint()
     assert busy == 0, "контрольна точка не змогла виконатись"
     assert checkpointed >= 0
     assert _change_counter(path) > 1

@@ -44,16 +44,16 @@ from app.domain import IngestMode, QualityGrade
 from app.eval import metrics as M
 
 __all__ = [
-    "DocumentBench",
     "BenchResult",
+    "DocumentBench",
     "GuardReport",
-    "peak_memory_mb",
+    "bench_document",
     "detect_tableformer_guard",
     "grade_distribution",
-    "bench_document",
-    "run_bench",
-    "render_markdown",
     "main",
+    "peak_memory_mb",
+    "render_markdown",
+    "run_bench",
 ]
 
 
@@ -78,7 +78,7 @@ def peak_memory_mb() -> float:
 
             if tracemalloc.is_tracing():
                 return tracemalloc.get_traced_memory()[1] / (1024 * 1024)
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         return float("nan")
 
@@ -111,7 +111,7 @@ def detect_tableformer_guard() -> GuardReport:
         from docling.models import table_structure_model  # type: ignore[import-not-found]
 
         source = inspect.getsource(table_structure_model)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return GuardReport(True, version, None, f"джерело недоступне: {exc}")
 
     lowered = source.lower()
@@ -221,7 +221,7 @@ def bench_document(
     started = time.perf_counter()
     try:
         parsed = parse_document(path, options)
-    except Exception as exc:  # noqa: BLE001 — один битий PDF не валить бенчмарк
+    except Exception as exc:
         return DocumentBench(
             document=path.name, mode=mode.value, pages=0,
             seconds=time.perf_counter() - started,

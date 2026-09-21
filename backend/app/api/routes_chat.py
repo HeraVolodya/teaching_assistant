@@ -88,14 +88,14 @@ class _Telemetry:
         try:
             with self.db.transaction() as con:
                 TelemetryRepo(con).event(name, **kw)
-        except Exception:  # noqa: BLE001 — телеметрія не валить відповідь
+        except Exception:
             log.debug("Не вдалося записати подію %s", name, exc_info=True)
 
     def unresolved_citation(self, message_id: str, emitted: str, available: Any) -> None:
         try:
             with self.db.transaction() as con:
                 TelemetryRepo(con).unresolved_citation(message_id, emitted, list(available))
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.debug("Не вдалося записати нерозв'язану цитату", exc_info=True)
 
 
@@ -363,7 +363,7 @@ async def _chat_stream(
                     ttft_ms = result.ttft_ms
                     tokens_out = result.tokens_out or tokens_out
                     model_id = result.model_id or model_id
-    except Exception as exc:  # noqa: BLE001 — стрім не має обриватись мовчки
+    except Exception as exc:
         log.exception("Помилка під час відповіді")
         yield frame(CHAT_ERROR, {
             "messageId": message_id,
@@ -499,7 +499,7 @@ def _persist_answer(
                     message_id,
                 ),
             )
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("Не вдалося зберегти відповідь %s", message_id)
 
 
@@ -516,7 +516,7 @@ def _maybe_title(services: Services, session_id: str, question: str) -> None:
                 con.execute(
                     "UPDATE chat_sessions SET title=? WHERE id=?", (title, session_id)
                 )
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.debug("Не вдалося оновити назву сесії", exc_info=True)
 
 

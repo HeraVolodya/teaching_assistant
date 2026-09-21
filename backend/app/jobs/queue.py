@@ -34,6 +34,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import statistics
 import time
 from collections import deque
@@ -46,11 +47,11 @@ from app.domain import JobState, JobType
 
 __all__ = [
     "HEARTBEAT_INTERVAL_S",
-    "JobCancelled",
     "ClaimedJob",
-    "ProgressTracker",
-    "Lease",
+    "JobCancelled",
     "JobQueue",
+    "Lease",
+    "ProgressTracker",
 ]
 
 # Heartbeat рідше за лізинг у 30 разів: лізинг 60 с, удар серця 2 с. Проміжок
@@ -104,7 +105,7 @@ class ProgressTracker:
     вимірювань дає стабільну оцінку, яка не смикається на кожній таблиці.
     """
 
-    __slots__ = ("total", "done", "_samples", "_last_at", "_started")
+    __slots__ = ("_last_at", "_samples", "_started", "done", "total")
 
     def __init__(self, total_weight: float, *, window: int = 24) -> None:
         self.total = max(float(total_weight), 1e-9)
@@ -160,7 +161,7 @@ class Lease:
                 ...
     """
 
-    __slots__ = ("queue", "job", "tracker", "_last_beat", "_cancelled", "_stage", "_on_progress")
+    __slots__ = ("_cancelled", "_last_beat", "_on_progress", "_stage", "job", "queue", "tracker")
 
     def __init__(
         self,
@@ -232,15 +233,12 @@ class Lease:
     def report(self, done_weight: float) -> None:
         """Абсолютний прогрес від колбека парсера (він звітує саме так)."""
         self.tracker.set_done(done_weight)
-        try:
+        # Колбек парсера НЕ має права кидати: Docling викликає його всередині
+        # свого циклу вікон, і виняток звідти лишив би напівзібраний документ
+        # без шансу на впорядковане завершення. Прапорець уже виставлено, і
+        # `poll_cancel` зупинить цикл на наступній межі вікна.
+        with contextlib.suppress(JobCancelled):
             self.checkpoint()
-        except JobCancelled:
-            # Колбек парсера НЕ має права кидати: Docling викликає його
-            # всередині свого циклу вікон, і виняток звідти лишив би
-            # напівзібраний документ без шансу на впорядковане завершення.
-            # Прапорець уже виставлено, і `poll_cancel` зупинить цикл на
-            # наступній межі вікна.
-            pass
 
     def poll_cancel(self) -> bool:
         """Неруйнівна перевірка скасування — для колбека `ParseOptions.cancel`.

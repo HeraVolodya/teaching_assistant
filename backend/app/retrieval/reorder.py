@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 
 from app.domain import RetrievedChunk
 
-__all__ = ["SourceBlock", "build_blocks", "u_shaped", "reorder"]
+__all__ = ["SourceBlock", "build_blocks", "reorder", "u_shaped"]
 
 
 @dataclass(slots=True)

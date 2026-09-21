@@ -35,8 +35,19 @@ from app.jobs.runner import JobRunner
 from app.jobs.supervisor import create_supervisor
 
 __all__ = [
-    "HEARTBEAT_INTERVAL_S", "ClaimedJob", "JobCancelled", "JobQueue", "Lease",
-    "ProgressTracker", "JobRunner", "IngestReport", "PipelineError",
-    "ingest_document", "build_collection_index_job", "resolve_document_path",
-    "reuse_cached_document", "content_sha256", "create_supervisor",
+    "HEARTBEAT_INTERVAL_S",
+    "ClaimedJob",
+    "IngestReport",
+    "JobCancelled",
+    "JobQueue",
+    "JobRunner",
+    "Lease",
+    "PipelineError",
+    "ProgressTracker",
+    "build_collection_index_job",
+    "content_sha256",
+    "create_supervisor",
+    "ingest_document",
+    "resolve_document_path",
+    "reuse_cached_document",
 ]

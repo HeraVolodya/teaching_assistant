@@ -48,23 +48,23 @@ from typing import Any
 from app.domain import Chunk, ChunkLevel, new_id
 
 __all__ = [
+    "DRAFT_SYSTEM_UK",
+    "MIN_CALIBRATION_QUESTIONS",
+    "RECOMMENDED_QUESTIONS",
+    "EvalQuestionRepo",
     "GoldPage",
     "GoldQuestion",
     "QuestionDraft",
     "ValidationIssue",
     "ValidationReport",
-    "EvalQuestionRepo",
-    "RECOMMENDED_QUESTIONS",
-    "MIN_CALIBRATION_QUESTIONS",
-    "DRAFT_SYSTEM_UK",
+    "approve_drafts",
+    "draft_questions",
     "load_csv",
     "load_json",
+    "sample_chunks",
     "save_csv",
     "save_json",
     "validate",
-    "sample_chunks",
-    "draft_questions",
-    "approve_drafts",
 ]
 
 # Скільки питань потрібно на колекцію. 38 — точка окупності u_lin (план, §7),
@@ -95,7 +95,7 @@ class GoldPage:
         return f"{self.document_id}:{self.page}" if self.document_id else str(self.page)
 
     @classmethod
-    def parse(cls, raw: Any) -> "GoldPage":
+    def parse(cls, raw: Any) -> GoldPage:
         if isinstance(raw, GoldPage):
             return raw
         if isinstance(raw, int):
@@ -150,7 +150,7 @@ class GoldQuestion:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any], *, collection_id: str | None = None) -> "GoldQuestion":
+    def from_dict(cls, data: dict[str, Any], *, collection_id: str | None = None) -> GoldQuestion:
         uids = data.get("gold_chunk_uids") or data.get("chunk_uids") or []
         if isinstance(uids, str):
             uids = [u for u in uids.split(_LIST_SEPARATOR) if u.strip()]

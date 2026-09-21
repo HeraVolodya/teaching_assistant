@@ -48,22 +48,22 @@ from app.eval import metrics as M
 from app.eval.gold_set import EvalQuestionRepo, GoldQuestion
 
 __all__ = [
+    "EVAL_DEPTH",
     "Arm",
     "ArmResult",
     "EvalRunRepo",
-    "run_retrieval_eval",
     "anchor_boost_disabled",
-    "standard_arms",
-    "weight_grid_arms",
+    "compare_runs",
     "final_top_k_arms",
+    "metrics_from_stored",
     "ranked_uids_from_debug",
     "run_arm",
+    "run_retrieval_eval",
     "run_suite",
-    "suite_rows",
+    "standard_arms",
     "suite_report",
-    "compare_runs",
-    "metrics_from_stored",
-    "EVAL_DEPTH",
+    "suite_rows",
+    "weight_grid_arms",
 ]
 
 # Глибина, до якої зберігається ранжований список. 50 — це `rerank_top_k` за
@@ -349,7 +349,7 @@ def run_arm(
                         filters=filters,
                         language=language,
                     )
-                except Exception as exc:  # noqa: BLE001 — прогін не має падати цілком
+                except Exception as exc:
                     errors[question.id] = f"{type(exc).__name__}: {exc}"
                     ranked[question.id] = []
                     finals[question.id] = []
@@ -419,7 +419,7 @@ class EvalRunRepo:
                 run_id, qid,
                 json.dumps(uids, ensure_ascii=False),
                 json.dumps(payload, ensure_ascii=False),
-                int(round(result.latencies_ms.get(qid, 0.0))),
+                round(result.latencies_ms.get(qid, 0.0)),
             ))
         self.con.executemany(
             "INSERT INTO eval_results (run_id,question_id,ranked_uids,scores_json,latency_ms)"

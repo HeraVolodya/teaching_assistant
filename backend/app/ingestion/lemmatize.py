@@ -38,18 +38,18 @@ from app.ingestion.uk_lexicon import STOPWORDS
 __all__ = [
     "DESIGNATION_RE",
     "UK_STOPWORDS",
-    "LemmaStream",
-    "MorphBackend",
     "FallbackBackend",
+    "LemmaStream",
+    "Lemmatizer",
+    "MemoryLemmaCache",
+    "MorphBackend",
     "PyMorphyBackend",
     "SimplemmaBackend",
-    "MemoryLemmaCache",
     "SqliteLemmaCache",
-    "Lemmatizer",
-    "lemmatize",
     "analyze_text",
     "default_lemmatizer",
     "is_designation",
+    "lemmatize",
 ]
 
 log = logging.getLogger(__name__)

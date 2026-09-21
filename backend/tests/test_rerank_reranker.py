@@ -73,7 +73,7 @@ def test_factory_follows_the_stub_environment(monkeypatch: pytest.MonkeyPatch) -
     assert isinstance(rr.create_reranker(), rr.StubReranker)
     monkeypatch.setenv("ASISTENT_STUB", "0")
     monkeypatch.setenv("ASISTENT_RERANK_MODEL_DIR", "/не/існує")
-    with pytest.raises(FileNotFoundError, match="tokenizer.json"):
+    with pytest.raises(FileNotFoundError, match=r"tokenizer\.json"):
         rr.create_reranker()
 
 
@@ -241,7 +241,7 @@ class _FakeSession:
     def get_providers(self) -> list[str]:
         return ["CPUExecutionProvider"]
 
-    def run(self, _outputs, feeds):  # noqa: ANN001
+    def run(self, _outputs, feeds):
         import numpy as np
 
         self.seen.append({k: v.copy() for k, v in feeds.items()})

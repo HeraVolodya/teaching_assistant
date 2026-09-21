@@ -24,7 +24,7 @@ import hashlib
 from dataclasses import dataclass, field
 from enum import Enum
 
-__all__ = ["Pooling", "Tier", "EmbeddingModel", "REGISTRY", "DEFAULT_MODEL_ID", "get", "model_key"]
+__all__ = ["DEFAULT_MODEL_ID", "REGISTRY", "EmbeddingModel", "Pooling", "Tier", "get", "model_key"]
 
 # Версія конвеєра нормалізації українського тексту (app/ingestion/normalize_uk.py).
 # Входить у ключ моделі: зміна нормалізації робить старі вектори несумісними.

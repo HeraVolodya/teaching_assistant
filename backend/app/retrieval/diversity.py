@@ -40,12 +40,12 @@ __all__ = [
     "DEFAULT_MAX_HAMMING",
     "DEFAULT_MIN_COSINE",
     "DroppedDuplicate",
-    "hamming64",
-    "simhash_similarity",
-    "relative_floor_value",
     "deduplicate",
-    "diversify",
     "distinct_documents",
+    "diversify",
+    "hamming64",
+    "relative_floor_value",
+    "simhash_similarity",
 ]
 
 # SimHash-64: 3 біти з 64 — це ~95% збіг зважених ознак. Ширше вікно починає

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -24,13 +24,13 @@ from app.settings import Settings
 
 __all__ = [
     "SAMPLE_TEXT",
-    "make_settings",
     "api_client",
-    "upload_text",
-    "wait_for_status",
     "create_assistant",
+    "make_settings",
     "read_sse",
     "sse_probe",
+    "upload_text",
+    "wait_for_status",
 ]
 
 # Маленький український корпус із заголовками: чанкер будує з нього
@@ -207,10 +207,8 @@ async def sse_probe(
     finally:
         disconnected.set()
         task.cancel()
-        try:
+        with suppress(asyncio.CancelledError, Exception):
             await task
-        except (asyncio.CancelledError, Exception):
-            pass
     return status, out_headers, "".join(chunks)
 
 

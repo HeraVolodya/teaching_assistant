@@ -36,7 +36,7 @@ from app.db.repositories import AssistantRepo, ChunkRepo, CollectionRepo, Docume
 from app.domain import Assistant, Collection, new_id
 from app.jobs.pipeline import resolve_document_path
 
-__all__ = ["router", "services_of", "default_collection_id"]
+__all__ = ["default_collection_id", "router", "services_of"]
 
 log = logging.getLogger("asistent.api")
 router = APIRouter(tags=["assistants"])

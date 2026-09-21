@@ -54,14 +54,14 @@ from app.embeddings.provider import (
 from app.embeddings.registry import UK_RETRIEVAL_TASK, EmbeddingModel, Pooling
 
 __all__ = [
-    "OnnxEmbeddingProvider",
+    "DEVICE_ENV",
+    "MAX_BATCH_ROWS",
+    "PROVIDERS_ENV",
     "ModelFilesMissing",
+    "OnnxEmbeddingProvider",
     "TokenizerContractError",
     "plan_batches",
     "select_providers",
-    "DEVICE_ENV",
-    "PROVIDERS_ENV",
-    "MAX_BATCH_ROWS",
 ]
 
 log = logging.getLogger(__name__)

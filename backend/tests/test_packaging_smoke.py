@@ -100,8 +100,8 @@ def test_стани_документа_збігаються_з_доменом() 
     from app.domain import DocStatus
 
     known = {s.value for s in DocStatus}
-    assert smoke.READY_STATES <= known
-    assert smoke.FAILED_STATES <= known
+    assert known >= smoke.READY_STATES
+    assert known >= smoke.FAILED_STATES
     assert DocStatus.READY.value in smoke.READY_STATES
 
 

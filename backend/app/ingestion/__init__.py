@@ -53,18 +53,42 @@ from app.ingestion.page_labels import PageLabelMap, resolve_page_labels
 from app.ingestion.probe import PageProbe, ProbeReport, probe_pdf, probe_text
 
 __all__ = [
+    "DESIGNATION_RE",
     # нормалізація й морфологія
-    "TEXT_PREPROC_VERSION", "normalize_uk", "tokenize", "search_terms",
-    "lemmatize", "analyze_text", "LemmaStream", "Lemmatizer", "SqliteLemmaCache",
-    "DESIGNATION_RE", "UK_STOPWORDS",
-    # тріаж і мітки сторінок
-    "probe_pdf", "probe_text", "ProbeReport", "PageProbe",
-    "resolve_page_labels", "PageLabelMap",
-    # парсинг
-    "parse_document", "ParseOptions", "ParsedDocument", "ParsedElement",
-    "ParsedPage", "ElementKind", "build_parse_profile", "parse_profile_hash",
-    "serialize_table_triplets",
+    "TEXT_PREPROC_VERSION",
+    "UK_STOPWORDS",
+    "ChunkConfig",
+    "ChunkTree",
+    "ElementKind",
+    "LemmaStream",
+    "Lemmatizer",
+    "PageLabelMap",
+    "PageProbe",
+    "ParseOptions",
+    "ParsedDocument",
+    "ParsedElement",
+    "ParsedPage",
+    "ProbeReport",
+    "SqliteLemmaCache",
+    "analyze_text",
+    "build_chapters",
+    "build_parse_profile",
+    "calibrate_ch_per_tok",
     # чанкування
-    "chunk_document", "chunk_document_tree", "chunk_markdown", "ChunkConfig",
-    "ChunkTree", "build_chapters", "simhash64", "calibrate_ch_per_tok",
+    "chunk_document",
+    "chunk_document_tree",
+    "chunk_markdown",
+    "lemmatize",
+    "normalize_uk",
+    # парсинг
+    "parse_document",
+    "parse_profile_hash",
+    # тріаж і мітки сторінок
+    "probe_pdf",
+    "probe_text",
+    "resolve_page_labels",
+    "search_terms",
+    "serialize_table_triplets",
+    "simhash64",
+    "tokenize",
 ]

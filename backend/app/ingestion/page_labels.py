@@ -27,17 +27,17 @@ from pathlib import Path
 from typing import Any, Literal
 
 __all__ = [
-    "PageLabelMap",
-    "LabelSource",
-    "to_roman",
-    "from_roman",
-    "to_alpha",
-    "format_label",
-    "labels_from_ranges",
-    "labels_from_pdf",
-    "labels_from_headers",
-    "resolve_page_labels",
     "MIN_HEADER_AGREEMENT",
+    "LabelSource",
+    "PageLabelMap",
+    "format_label",
+    "from_roman",
+    "labels_from_headers",
+    "labels_from_pdf",
+    "labels_from_ranges",
+    "resolve_page_labels",
+    "to_alpha",
+    "to_roman",
 ]
 
 log = logging.getLogger(__name__)

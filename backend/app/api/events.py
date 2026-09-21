@@ -28,6 +28,7 @@ WebView перепідключається сам, і без відновлен�
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import threading
 from collections import deque
@@ -36,21 +37,21 @@ from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
-    "Event",
-    "EventBus",
-    "JOB_PROGRESS",
-    "JOB_FAILED",
-    "DOC_READY",
-    "CHAT_TOKEN",
     "CHAT_CITATIONS",
     "CHAT_DEBUG",
     "CHAT_DONE",
     "CHAT_ERROR",
+    "CHAT_TOKEN",
+    "DOC_READY",
+    "EVENT_TYPES",
+    "JOB_FAILED",
+    "JOB_PROGRESS",
     "MODEL_DOWNLOAD",
     "WORKER_STATUS",
-    "EVENT_TYPES",
-    "sse_frame",
+    "Event",
+    "EventBus",
     "parse_last_event_id",
+    "sse_frame",
 ]
 
 # --- типи подій ---------------------------------------------------------
@@ -158,12 +159,10 @@ class EventBus:
     @staticmethod
     def _fanout(event: Event, targets: list[asyncio.Queue[Event]]) -> None:
         for queue in targets:
-            try:
+            # Підписник не встигає читати. Втратити подію краще, ніж
+            # заблокувати індексацію на повільному WebView.
+            with contextlib.suppress(asyncio.QueueFull):
                 queue.put_nowait(event)
-            except asyncio.QueueFull:
-                # Підписник не встигає читати. Втратити подію краще, ніж
-                # заблокувати індексацію на повільному WebView.
-                pass
 
     # ------------------------------------------------------------ підписка
     def replay(self, last_event_id: int | None) -> list[Event]:

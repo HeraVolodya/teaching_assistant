@@ -28,8 +28,13 @@ from collections.abc import Mapping, Sequence
 from app.domain import Citation, RetrievedChunk
 
 __all__ = [
-    "CITATION_RE", "parse_citations", "extract_ordinals", "merge_page_ranges",
-    "citations_from_chunks", "quote_for", "record_unresolved",
+    "CITATION_RE",
+    "citations_from_chunks",
+    "extract_ordinals",
+    "merge_page_ranges",
+    "parse_citations",
+    "quote_for",
+    "record_unresolved",
 ]
 
 # Приймаємо і [1], і [1,2], і [1, 2] — малі моделі пишуть по-різному, і
