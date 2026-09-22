@@ -12,12 +12,26 @@
 
 from __future__ import annotations
 
+import inspect
+import re
+import tomllib
 from pathlib import Path
 
-from helpers_packaging import TAURI_DIR, read, script
+from helpers_packaging import REPO_ROOT, TAURI_DIR, read, script
 
 runtime = script("build_runtime")
 budget = script("check_size_budget")
+
+BACKEND_DIR = REPO_ROOT / "backend"
+PYPROJECT = tomllib.loads(read(BACKEND_DIR / "pyproject.toml"))
+
+
+def _declared(dependencies: list[str]) -> set[str]:
+    """Імена дистрибутивів із рядків PEP 508, нормалізовані за PEP 503."""
+    return {
+        re.split(r"[<>=!~\[;\s]", spec, maxsplit=1)[0].strip().lower().replace("_", "-")
+        for spec in dependencies
+    }
 
 
 # ------------------------------------------------------------- розкладка
@@ -31,6 +45,68 @@ def test_шлях_інтерпретатора_збігається_з_обол�
     sidecar = read(TAURI_DIR / "src" / "sidecar.rs")
     assert 'runtime_dir.join("python.exe")' in sidecar
     assert 'join("bin").join("python3")' in sidecar
+
+
+# --------------------------------------------------------------- залежності
+def test_multipart_оголошено_бо_api_приймає_форми() -> None:
+    """FastAPI вимагає `python-multipart` на РЕЄСТРАЦІЇ маршруту, не на запиті.
+
+    Тобто будь-який `Form(...)`/`UploadFile` без цієї залежності — не помилка
+    завантаження файлу, а RuntimeError на імпорті `app.api`, тобто застосунок,
+    який не стартує. У `.venv` розробника пакет опинився транзитивно (fastapi
+    та starlette згадують його в опційних extras), тому локально все працювало,
+    а в чистому рантаймі `uv pip install backend[worker]` його не було — і
+    падіння вилізло аж у запакованому інсталяторі.
+    """
+    api_dir = BACKEND_DIR / "app" / "api"
+    users = [p.name for p in api_dir.glob("*.py") if re.search(r"\bUploadFile\b|\bForm\(", read(p))]
+    assert users, "очікували, що API приймає форми — якщо ні, тест треба переписати"
+    assert "python-multipart" in _declared(PYPROJECT["project"]["dependencies"]), (
+        f"{', '.join(users)} використовують форми, але python-multipart не оголошено "
+        "в backend/pyproject.toml — запакований застосунок помре на старті."
+    )
+
+
+def test_self_check_імпортує_весь_застосунок() -> None:
+    """Гейт, якого бракувало: відсутня залежність роутера мусить валити ЗБІРКУ.
+
+    Поки `self_check` імпортував лише `app.config` і `app.net_guard`, рантайм
+    без `python-multipart` спокійно доїжджав до інсталятора, і причина
+    з'ясовувалась аж у димовому тесті — цілий цикл CI (~30 хв) замість двох
+    секунд тут. `app.main` тягне всі роутери, тому саме він і мусить бути в
+    перевірці, разом із `uvicorn`, якого вимагає `python -m app.main`.
+
+    Звіряємо КОНСТАНТУ, а не текст функції: перевірка підрядка у
+    `inspect.getsource` проходила б і тоді, коли `app.main` згадано лише в
+    коментарі.
+    """
+    assert "app.main" in runtime.SELF_CHECK_CODE
+    assert "uvicorn" in runtime.SELF_CHECK_CODE
+    # `len(app.routes)` під FastAPI 0.141 дорівнює 8 незалежно від кількості
+    # ендпоїнтів — число, яке має вигляд перевірки й не перевіряє нічого.
+    assert "openapi()" in runtime.SELF_CHECK_CODE
+    assert inspect.getsource(runtime.self_check).count("SELF_CHECK_CODE") == 1
+
+
+def test_self_check_звіряє_контракт_димового_тесту() -> None:
+    """Перейменований маршрут мусить валити ЗБІРКУ, а не димовий тест.
+
+    `smoke_installer.py` стукає у фіксовані шляхи; якщо роутер перейменують,
+    зараз це видно лише через пів години, вже на запакованому інсталяторі, як
+    «Ендпоїнт не знайдено — контракт API змінився».
+    """
+    smoke = script("smoke_installer")
+    expected = {
+        smoke.HEALTH_PATH,
+        smoke.ASSISTANTS_PATH,
+        smoke.UPLOAD_PATH,
+        smoke.SESSIONS_PATH,
+        smoke.CHAT_PATH,
+    }
+    assert expected <= set(runtime.SMOKE_ENDPOINTS), (
+        "self_check не звіряє всі шляхи, якими користується димовий тест: "
+        f"бракує {sorted(expected - set(runtime.SMOKE_ENDPOINTS))}"
+    )
 
 
 def test_плейсхолдер_моделей_створюється(tmp_path: Path) -> None:
@@ -102,6 +178,52 @@ def test_релокації_потребує_лише_абсолютний_не�
     assert not runtime.needs_relocation("/System/Library/Frameworks/CoreFoundation")
     assert not runtime.needs_relocation("@rpath/libssl.3.dylib")
     assert not runtime.needs_relocation("@executable_path/../lib/libpython3.12.dylib")
+
+
+def test_індекс_бібліотек_віддає_найближчу_до_кореня(tmp_path: Path) -> None:
+    shallow = tmp_path / "lib" / "libssl.3.dylib"
+    deep = tmp_path / "lib" / "python3.12" / "site-packages" / "w" / "libssl.3.dylib"
+    for path in (shallow, deep):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"")
+    # Копія з колеса не має перемагати системну бібліотеку рантайму.
+    assert runtime.library_index(tmp_path)["libssl.3.dylib"] == shallow
+
+
+def test_переписаний_шлях_рахується_від_самого_бінарника(tmp_path: Path) -> None:
+    """`@loader_path`, бо `@executable_path` залежить від того, ХТО вантажить.
+
+    Стара арифметика (`'../' * (глибина - 1)` від `@executable_path`) була
+    правильною лише для глибини 2. Для `bin/python3` і `lib/libpython3.12.dylib`
+    — тобто для двох файлів, заради яких функція й існує, — вона давала
+    `@executable_path/lib/…`, тобто `runtime/bin/lib/…`, шлях у порожнечу.
+    """
+    lib = tmp_path / "lib" / "libpython3.12.dylib"
+    lib.parent.mkdir(parents=True)
+    lib.write_bytes(b"")
+    index = runtime.library_index(tmp_path)
+    absolute = "/install/lib/libpython3.12.dylib"
+
+    # Інтерпретатор: runtime/bin/python3 → ../lib/libpython3.12.dylib
+    assert runtime.relocated_load_path(absolute, tmp_path / "bin" / "python3", index, tmp_path) == (
+        "@loader_path/../lib/libpython3.12.dylib"
+    )
+    # Сусід у тій самій теці — без жодного `..`.
+    assert runtime.relocated_load_path(absolute, lib.parent / "libssl.3.dylib", index, tmp_path) == (
+        "@loader_path/libpython3.12.dylib"
+    )
+    # Модуль, закопаний у site-packages.
+    deep = tmp_path / "lib" / "python3.12" / "site-packages" / "numpy" / "core.so"
+    assert runtime.relocated_load_path(absolute, deep, index, tmp_path) == (
+        "@loader_path/../../../libpython3.12.dylib"
+    )
+
+
+def test_невідома_бібліотека_шукається_в_lib(tmp_path: Path) -> None:
+    # Нічого не знайшли — лишається єдине розумне припущення, `runtime/lib`.
+    assert runtime.relocated_load_path(
+        "/nowhere/libfoo.dylib", tmp_path / "bin" / "python3", {}, tmp_path
+    ) == "@loader_path/../lib/libfoo.dylib"
 
 
 def test_фікс_install_names_ігнорується_поза_macos(tmp_path: Path) -> None:

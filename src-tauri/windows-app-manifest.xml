@@ -2,13 +2,38 @@
 <!--
   Маніфест Windows-застосунку.
 
-  Три речі, кожна з яких лікує конкретну задокументовану поломку:
+  УВАГА: цей файл ЗАМІНЮЄ типовий маніфест tauri-build, а не доповнює його
+  (`WindowsAttributes::app_manifest` підставляє рядок цілком). Усе, що було в
+  типовому, треба принести сюди руками — саме через це нижче стоїть залежність
+  на Common-Controls v6.
+
+  Чотири речі, кожна з яких лікує конкретну задокументовану поломку:
+
+  0. Common-Controls 6.0.0.0 — ЄДИНИЙ вміст типового маніфесту tauri-build
+     (tauri-build/src/windows-app-manifest.xml), і без нього застосунок НЕ
+     ЗАПУСКАЄТЬСЯ ВЗАГАЛІ. `tauri-plugin-dialog` вмикає у `rfd` фічу
+     `common-controls-v6`, тобто `rfd` статично імпортує `TaskDialogIndirect`
+     з `comctl32.dll` (windows-sys, raw-dylib). Цей символ експортує лише
+     comctl32 версії 6, яка підключається ТІЛЬКИ через оцю SxS-залежність;
+     без неї завантажувач бере System32\comctl32.dll 5.82, не знаходить точку
+     входу і вбиває процес ЩЕ ДО `main()` з кодом 0xC0000139
+     (STATUS_ENTRYPOINT_NOT_FOUND, він же 3221225785 у десятковому).
+     Діагностики при цьому нуль: ні лога, ні api-port.json, ні діалогу —
+     рівно те, що показував димовий тест у CI. Сам tauri-build попереджає про
+     це в доккоментарі до `app_manifest`.
+     НЕ ПРИБИРАТИ, навіть якщо здається, що діалогами ми майже не користуємось:
+     імпорт статичний, тож він спрацьовує незалежно від того, чи викликано
+     `fatal()` хоч раз.
 
   1. longPathAware — шляхи довші за MAX_PATH (260). Кириличне ім'я підручника
      плюс %LOCALAPPDATA%\Asistent\artifacts\<uuid>\... пробиває 260 тривіально.
      Без цього прапорця Python отримує ENOENT на файлі, який існує.
-  2. activeCodePage UTF-8 — інакше аргументи командного рядка з кирилицею,
-     які оболонка передає sidecar-у, перетворюються на cp1251-сміття.
+  2. activeCodePage UTF-8 — кодова сторінка вузьких Win32-викликів САМОГО
+     `Asistent.exe` (шляхи, які оболонка передає в tao/wry і в `CreateProcessW`).
+     Це НЕ поширюється на Python: дочірній процес має власну ACP, і його
+     кирилицю рятують `PYTHONUTF8`/`PYTHONIOENCODING`, які виставляє
+     `sidecar.rs::inject_env`. Обидва механізми потрібні; прибравши другий
+     «як дубль першого», отримаємо зламані імена файлів усередині Python.
   3. dpiAware/dpiAwareness — WebView2 без цього рендериться розмито на
      ноутбуках із масштабуванням 125/150%, типових для машин академії.
 
@@ -17,6 +42,20 @@
 -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
   <assemblyIdentity type="win32" name="ua.gov.nasv.asistent" version="0.1.0.0" />
+
+  <!-- Див. пункт 0 у коментарі вище. Без цього блоку .exe не стартує. -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
 
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>

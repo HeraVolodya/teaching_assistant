@@ -12,6 +12,8 @@
 //!    python-build-standalone — один процес і звичайні DLL. Але воркери — це теж
 //!    процеси (див. план, §0), тож гарантія вбивства дерева потрібна однаково.
 //!    Windows → Job Object з KILL_ON_JOB_CLOSE, Unix → група процесів + killpg.
+//!    На Unix цього МАЛО без обробника сигналів: SIGTERM убиває оболонку в обхід
+//!    деструкторів, і python лишається жити сиротою — див. `arm_terminating_signals`.
 //!
 //! 2. **stdout/stderr перенаправляються у файл `sidecar.log`.** Саме там з'явиться
 //!    Python-traceback, що вбиває старт. Це різниця між 10-хвилинною і 3-денною
@@ -215,6 +217,8 @@ impl Sidecar {
 
         #[cfg(windows)]
         let job = assign_to_kill_on_close_job(&child);
+        #[cfg(unix)]
+        arm_terminating_signals(child.id() as i32);
 
         // Хто слухає й на чому — для димового тесту й для екрана «Діагностика».
         let _ = std::fs::write(
@@ -305,6 +309,9 @@ impl Sidecar {
                 std::thread::sleep(Duration::from_millis(50));
             }
             unsafe { libc::killpg(pgid, libc::SIGKILL) };
+            // Група мертва — обробник сигналів більше не має по чому стріляти.
+            // Без цього він міг би влучити в чужий процес із перевикористаним pid.
+            CHILD_PID.store(0, std::sync::atomic::Ordering::SeqCst);
         }
 
         #[cfg(windows)]
@@ -389,6 +396,65 @@ fn http_ok(port: u16, path: &str) -> bool {
     }
 }
 
+/// PID sidecar-а для обробника сигналів. Глобал, бо обробник не має контексту.
+///
+/// Через `process_group(0)` цей pid водночас є PGID групи, тож `killpg` по
+/// ньому накриває і воркерів, породжених Python.
+#[cfg(unix)]
+static CHILD_PID: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+/// ЧОМУ ЦЕ ПОТРІБНО, ХОЧА `RunEvent::Exit` УЖЕ ВБИВАЄ ДЕРЕВО.
+///
+/// На Unix типова реакція на SIGTERM — негайна смерть процесу ядром: жоден
+/// деструктор Rust не виконується, `RunEvent::Exit` не настає, `Drop` для
+/// `Sidecar` не викликається. Ані tauri, ані tao обробників сигналів не
+/// ставлять. Наслідок: `kill`, `killall`, вихід із сеансу чи `proc.terminate()`
+/// димового тесту вбивають оболонку і ЛИШАЮТЬ python живим — у власній групі
+/// процесів, переусиновленим launchd, з відкритим портом 8765. Саме це й ловить
+/// перевірка осиротілих процесів у `smoke_installer.py`, і саме це побачив би
+/// викладач як «застосунок закрито, але порт зайнятий».
+///
+/// На Windows аналога не треба: `TerminateProcess` закриває хендл Job Object, а
+/// KILL_ON_JOB_CLOSE робить решту за нас.
+///
+/// Обробник викликається в контексті сигналу, тому тут ЛИШЕ async-signal-safe
+/// виклики: `killpg`, `waitpid`, `nanosleep`, `_exit`. Жодних алокацій, жодного
+/// `println!`, жодних м'ютексів — інакше можливий дедлок замість завершення.
+#[cfg(unix)]
+extern "C" fn on_terminating_signal(signal: i32) {
+    let pid = CHILD_PID.load(std::sync::atomic::Ordering::SeqCst);
+    if pid > 0 {
+        unsafe {
+            // Спершу ввічливо: SIGTERM дає uvicorn закрити SQLite (PRAGMA
+            // optimize + чистий чекпойнт WAL), як і на штатному шляху виходу.
+            libc::killpg(pid, libc::SIGTERM);
+            let pause = libc::timespec { tv_sec: 0, tv_nsec: 100_000_000 };
+            let mut status: libc::c_int = 0;
+            for _ in 0..30 {
+                if libc::waitpid(pid, &mut status, libc::WNOHANG) != 0 {
+                    break;
+                }
+                libc::nanosleep(&pause, std::ptr::null_mut());
+            }
+            libc::killpg(pid, libc::SIGKILL);
+        }
+    }
+    // 128+N — домовленість оболонки про «завершено сигналом N».
+    unsafe { libc::_exit(128 + signal) }
+}
+
+/// Перехопити сигнали завершення одразу після появи дитини.
+#[cfg(unix)]
+fn arm_terminating_signals(pid: i32) {
+    CHILD_PID.store(pid, std::sync::atomic::Ordering::SeqCst);
+    // Явне зведення до вказівника на функцію, а вже потім до `sighandler_t`:
+    // так каст не залежить від того, чи вміє компілятор сам звести fn-item.
+    let handler = on_terminating_signal as extern "C" fn(i32) as libc::sighandler_t;
+    for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+        unsafe { libc::signal(signal, handler) };
+    }
+}
+
 /// Створити Job Object із KILL_ON_JOB_CLOSE і призначити в нього дитину.
 #[cfg(windows)]
 fn assign_to_kill_on_close_job(child: &Child) -> Option<isize> {
@@ -399,9 +465,14 @@ fn assign_to_kill_on_close_job(child: &Child) -> Option<isize> {
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
 
+    // ЧОМУ ТУТ ГОЛОСНО. Job Object — ЄДИНЕ, що вбиває дерево процесів на
+    // Windows; якщо він не створився, застосунок працює як звичайно, а python
+    // переживає вихід. Димовий тест бачить тоді лише «Осиротілі процеси після
+    // виходу» і жодної причини. Код помилки коштує два рядки й економить цикл CI.
     unsafe {
         let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
         if job.is_null() {
+            eprintln!("[shell] CreateJobObjectW провалився, GetLastError={}", last_error());
             return None;
         }
         let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
@@ -414,9 +485,15 @@ fn assign_to_kill_on_close_job(child: &Child) -> Option<isize> {
         ) != 0
             && AssignProcessToJobObject(job, child.as_raw_handle() as _) != 0;
         if !configured {
+            eprintln!("[shell] джоб не налаштовано/не призначено, GetLastError={}", last_error());
             windows_sys::Win32::Foundation::CloseHandle(job);
             return None;
         }
         Some(job as isize)
     }
+}
+
+#[cfg(windows)]
+fn last_error() -> u32 {
+    unsafe { windows_sys::Win32::Foundation::GetLastError() }
 }

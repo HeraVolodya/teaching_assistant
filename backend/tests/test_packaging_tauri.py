@@ -30,8 +30,11 @@ ALLOWED_COMMANDS = {"api_base_url", "sidecar_log_path", "reveal_log"}
 # Бюджет обсягу. Міряється КОДОМ (без коментарів): коментарі тут несуть
 # обґрунтування пасток і є цінністю, а не шумом. Ціль плану — «~300 рядків»,
 # тобто оболонка без бізнес-логіки; поріг лишає запас на платформні гілки
-# (Job Object на Windows + група процесів на Unix живуть в одному файлі).
-RUST_CODE_BUDGET = 420
+# (Job Object на Windows + група процесів і обробник сигналів на Unix живуть в
+# одному файлі). Піднято з 420 заради `on_terminating_signal`: без нього SIGTERM
+# убивав оболонку в обхід `RunEvent::Exit` і лишав живий python — це не окраса,
+# а виконання обіцянки «вбити дерево на будь-якому шляху виходу».
+RUST_CODE_BUDGET = 460
 
 
 # ------------------------------------------------------------------ tauri.conf
@@ -99,6 +102,35 @@ def test_маніфест_windows_вмикає_довгі_шляхи_і_utf8() -
     # Інакше кирилиця в аргументах sidecar-а стає cp1251-сміттям.
     assert re.search(r"<activeCodePage[^>]*>UTF-8</activeCodePage>", text)
     assert 'level="asInvoker"' in text
+
+
+def test_маніфест_оголошує_common_controls_v6() -> None:
+    """Без цього блоку .exe не стартує взагалі — і без жодної діагностики.
+
+    `WindowsAttributes::app_manifest` ЗАМІНЮЄ типовий маніфест tauri-build, а
+    той складається рівно з однієї залежності — на Common-Controls 6.0.0.0.
+    `tauri-plugin-dialog` вмикає у `rfd` фічу `common-controls-v6`, тобто
+    `TaskDialogIndirect` імпортується з `comctl32.dll` СТАТИЧНО (windows-sys,
+    raw-dylib). Версія 5.82 із System32 цього символу не експортує, а версію 6
+    підключає лише ця SxS-залежність — тож завантажувач убиває процес ще до
+    `main()` з кодом 0xC0000139 (3221225785). Саме так падав димовий тест:
+    порожній sidecar.log, відсутній api-port.json, нуль підказок про причину.
+    """
+    ns = {"asm": "urn:schemas-microsoft-com:asm.v1"}
+    tree = ET.parse(TAURI_DIR / "windows-app-manifest.xml")
+    identities = [
+        element.attrib
+        for element in tree.iterfind(
+            "asm:dependency/asm:dependentAssembly/asm:assemblyIdentity", ns
+        )
+    ]
+    common = [a for a in identities if a.get("name") == "Microsoft.Windows.Common-Controls"]
+    assert common, (
+        "У маніфесті немає залежності на Common-Controls. Поки в оболонці є "
+        "tauri-plugin-dialog, її видалення = застосунок, який не запускається."
+    )
+    assert common[0].get("version") == "6.0.0.0"
+    assert common[0].get("publicKeyToken") == "6595b64144ccf1df"
 
 
 def test_build_rs_підключає_маніфест() -> None:
@@ -171,6 +203,26 @@ def test_sidecar_вбиває_дерево_процесів() -> None:
     assert "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE" in text     # Windows
     assert "process_group(0)" in text and "killpg" in text  # Unix
     assert "TerminateJobObject" in text
+
+
+def test_sidecar_переживає_sigterm_не_лишаючи_сиріт() -> None:
+    """SIGTERM на Unix убиває процес в обхід деструкторів Rust.
+
+    Ані tauri, ані tao обробників сигналів не ставлять, тому `RunEvent::Exit`
+    не настає, `Drop for Sidecar` не викликається — і python лишається живим у
+    власній групі процесів із зайнятим портом. Димовий тест інсталятора
+    завершує застосунок саме `proc.terminate()`, тобто SIGTERM, і перевіряє
+    відсутність сиріт; без обробника він падав би вже ПІСЛЯ успішного сценарію.
+    """
+    text = read(TAURI_DIR / "src" / "sidecar.rs")
+    assert "arm_terminating_signals" in text
+    for signal in ("SIGTERM", "SIGINT", "SIGHUP"):
+        assert f"libc::{signal}" in text, f"обробник не перехоплює {signal}"
+    # Обробник виконується в контексті сигналу, тому чекати на дитину він мусить
+    # async-signal-safe засобами (waitpid + nanosleep), а виходити — через _exit,
+    # а не через звичайне завершення з деструкторами.
+    for call in ("libc::killpg", "libc::waitpid", "libc::nanosleep", "libc::_exit"):
+        assert call in text, f"обробник сигналу не використовує {call}"
 
 
 def test_sidecar_ловить_вивід_у_лог() -> None:

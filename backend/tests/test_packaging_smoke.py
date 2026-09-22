@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from helpers_packaging import script
+from helpers_packaging import TAURI_DIR, read, script
 
 smoke = script("smoke_installer")
 
@@ -114,6 +114,31 @@ def test_порт_передається_тією_ж_змінною_що_чит�
     assert Settings.model_config["env_prefix"] == "ASISTENT_"
     assert "port" in Settings.model_fields
     assert '"ASISTENT_PORT"' in read(TAURI_DIR / "src" / "sidecar.rs")
+
+
+def test_шлях_лога_дзеркалить_оболонку(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """`sidecar_log_path` мусить давати те саме, що `Layout::resolve` у Rust.
+
+    Це єдиний шлях, яким провал старту перетворюється на traceback у логу CI.
+    Розбіжність тут не валить збірку — вона робить діагностику брехливою:
+    `dump_diagnostics` напише «файлу немає — sidecar не стартував узагалі» саме
+    тоді, коли лог є і містить причину.
+    """
+    rust = read(TAURI_DIR / "src" / "sidecar.rs")
+    # У Rust гілка macOS стоїть ДО використання data_dir, тож ASISTENT_DATA_DIR
+    # на каталог логів не впливає. Перевіряємо, що це досі так.
+    assert 'if cfg!(target_os = "macos")' in rust
+    assert '.join("Library").join("Logs").join("Asistent")' in rust
+
+    monkeypatch.setenv("ASISTENT_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(smoke.platform, "system", lambda: "Darwin")
+    assert smoke.sidecar_log_path() == (
+        Path.home() / "Library" / "Logs" / "Asistent" / "sidecar.log"
+    )
+
+    # На Windows/Linux, навпаки, логи лежать усередині каталогу даних.
+    monkeypatch.setattr(smoke.platform, "system", lambda: "Windows")
+    assert smoke.sidecar_log_path() == tmp_path / "logs" / "sidecar.log"
 
 
 def test_пошук_осиротілих_процесів_не_падає(tmp_path: Path) -> None:

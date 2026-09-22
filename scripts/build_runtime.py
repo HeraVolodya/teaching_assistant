@@ -20,8 +20,9 @@ python-build-standalone дає звичайний `python.exe` і звичайн
 Бінарники python-build-standalone несуть **абсолютні** шляхи інсталяції у
 LC_LOAD_DYLIB. Після перенесення в `Asistent.app/Contents/Resources/runtime`
 такий шлях указує в порожнечу, і застосунок падає на старті з
-`Library not loaded`. `install_name_tool` переписує їх на `@executable_path/…`
+`Library not loaded`. `install_name_tool` переписує їх на `@loader_path/…`
 ДО підписання — після підписання будь-яка зміна бінарника ламає підпис.
+Саме `@loader_path`, а не `@executable_path`: див. `relocated_load_path`.
 
 Приклад:
     python scripts/build_runtime.py --out src-tauri/resources/runtime
@@ -171,13 +172,63 @@ def needs_relocation(load_path: str) -> bool:
     return load_path.startswith("/")
 
 
+def library_index(runtime_dir: Path) -> dict[str, Path]:
+    """Індекс «ім'я файлу → шлях» для всіх бібліотек рантайму.
+
+    Будується ОДИН раз: `rglob` на кожен із тисяч бінарників перетворив би
+    збірку на хвилини. Якщо ім'я трапляється кілька разів, виграє найближче до
+    кореня — тобто `lib/libssl.3.dylib`, а не його копія, закопана в колесі.
+    """
+    index: dict[str, Path] = {}
+    for path in runtime_dir.rglob("*"):
+        if path.suffix not in {".dylib", ".so"} or path.is_symlink() or not path.is_file():
+            continue
+        known = index.get(path.name)
+        if known is None or len(path.parts) < len(known.parts):
+            index[path.name] = path
+    return index
+
+
+def relocated_load_path(
+    load_path: str, binary: Path, index: dict[str, Path], runtime_dir: Path
+) -> str:
+    """Чим замінити абсолютний `load_path` у `binary`.
+
+    ЧОМУ `@loader_path`, А НЕ `@executable_path`.
+    `@executable_path` — тека ВИКОНУВАНОГО ФАЙЛУ ПРОЦЕСУ, тобто `runtime/bin`
+    для `python3`. Тому відносний шлях від нього залежить не від бінарника,
+    який ми правимо, а від того, хто його вантажить, — і воркер, запущений
+    іншим шляхом, дістав би інший корінь. `@loader_path` — тека самого
+    бінарника, тож шлях лишається правильним завжди.
+
+    ЩО ТУТ БУЛО ЗЛАМАНО. Попередня арифметика —
+    `'@executable_path/' + '../' * (len(parts) - 2) + f'lib/{name}'` — давала
+    правильний результат рівно для глибини 2 і мовчки промахувалась для решти.
+    Зокрема для `bin/python3` і для `lib/libpython3.12.dylib` вона повертала
+    `@executable_path/lib/…`, тобто `runtime/bin/lib/…`, — шлях у порожнечу, і
+    саме для тих двох файлів, заради яких уся ця функція й написана. Помилка
+    не проявилась лише тому, що сучасний python-build-standalone уже приїздить
+    із `@rpath`-іменами й переписувати не було чого; наступна зміна апстріму
+    зробила б її фатальною на машині викладача, а не в CI.
+
+    Бібліотеку шукаємо в індексі, а не припускаємо `lib/<ім'я>`: колеса PyPI
+    возять власні `.dylib` поруч зі своїми `.so`, і для них `lib/` — хибна
+    адреса.
+    """
+    name = Path(load_path).name
+    target = index.get(name, runtime_dir / "lib" / name)
+    relative = os.path.relpath(target, binary.parent).replace(os.sep, "/")
+    return f"@loader_path/{relative}"
+
+
 def fix_macos_install_names(runtime_dir: Path) -> int:
-    """Переписати абсолютні install names на `@executable_path`. Повертає кількість правок."""
+    """Переписати абсолютні install names на `@loader_path`. Повертає кількість правок."""
     if platform.system() != "Darwin":
         return 0
 
     binaries = [p for p in runtime_dir.rglob("*") if p.is_file() and not p.is_symlink()]
     targets = [p for p in binaries if p.suffix in {".dylib", ".so"} or (p.parent.name == "bin" and os.access(p, os.X_OK))]
+    index = library_index(runtime_dir)
     fixed = 0
 
     for binary in targets:
@@ -191,10 +242,7 @@ def fix_macos_install_names(runtime_dir: Path) -> int:
         for load_path in parse_otool_load_paths(out):
             if not needs_relocation(load_path):
                 continue
-            name = Path(load_path).name
-            # Глибина відносно кореня рантайму визначає кількість `..`.
-            depth = len(binary.relative_to(runtime_dir).parts) - 1
-            new = "@executable_path/" + "../" * max(depth - 1, 0) + f"lib/{name}"
+            new = relocated_load_path(load_path, binary, index, runtime_dir)
             try:
                 run(["install_name_tool", "-change", load_path, new, str(binary)])
                 fixed += 1
@@ -290,15 +338,67 @@ def install_packages(runtime_dir: Path, uv: str, *, extras: list[str]) -> None:
     run([uv, "pip", "install", "--python", str(py), "--no-cache", spec])
 
 
+# Ендпоїнти, на які спирається димовий тест інсталятора
+# (`scripts/smoke_installer.py`). Звіряються ТУТ, за дві секунди, а не через
+# пів години після збірки: перейменований маршрут інакше проявився б як
+# «Ендпоїнт не знайдено — контракт API змінився» вже на запакованому .exe.
+SMOKE_ENDPOINTS = (
+    "/api/health",
+    "/api/assistants",
+    "/api/collections/{collection_id}/documents",
+    "/api/sessions",
+    "/api/chat",
+)
+
+# Код самоперевірки — окремою константою, щоб тест пакування звіряв саме те,
+# що виконається, а не підрядок вихідного тексту функції.
+#
+# `app.main.app.openapi()`, а НЕ `len(app.routes)`: під FastAPI 0.141 роутери
+# лишаються вкладеними, тому `len(app.routes)` дорівнює 8 незалежно від того,
+# скільки ендпоїнтів зареєстровано, — число, яке має вигляд перевірки, але не
+# перевіряє нічого. Побудова схеми заодно матеріалізує кожен `response_model`,
+# тобто ловить ще й помилки pydantic-моделей.
+#
+# `import uvicorn` тут тому, що `python -m app.main` імпортує його при старті:
+# без цього рядка рантайм зі зламаним колесом uvicorn проходив би збірку і
+# помирав аж у димовому тесті.
+SELF_CHECK_CODE = (
+    "import sys, uvicorn, app.main; from app import config; "
+    f"expected = {SMOKE_ENDPOINTS!r}; "
+    "paths = app.main.app.openapi()['paths']; "
+    "missing = [p for p in expected if p not in paths]; "
+    "assert not missing, ('немає ендпоїнтів ' + repr(missing) + '; є: ' + repr(sorted(paths))); "
+    "print(sys.version.split()[0], config.APP_NAME, 'uvicorn', uvicorn.__version__, "
+    "len(paths), 'ендпоїнтів')"
+)
+
+
 def self_check(runtime_dir: Path) -> None:
-    """Перевірити, що рантайм узагалі запускається і бачить пакет `app`."""
+    """Перевірити, що рантайм запускається і що застосунок ЗБИРАЄТЬСЯ ЦІЛКОМ.
+
+    ІМПОРТУЄМО `app.main`, А НЕ ЛИШЕ `app.config`. Попередня версія перевіряла
+    два найлегші модулі й тому пропускала цілий клас відмов: відсутню
+    залежність, потрібну комусь із роутерів. Саме так у постачання поїхав
+    рантайм без `python-multipart` — FastAPI перевіряє його в момент
+    РЕЄСТРАЦІЇ маршруту з `Form(...)`, тобто на імпорті `app.api`, і
+    запакований застосунок помирав на старті. Помилка коштувала повного циклу
+    CI (збірка інсталятора + димовий тест, ~30 хв) замість двох секунд тут.
+
+    `import app.main` безпечний як перевірка: `create_app()` на рівні модуля
+    лише реєструє роутери, а все, що торкається диска, бази й мережі, живе у
+    `lifespan`, який виконується тільки під сервером. Порт не займається,
+    uvicorn не стартує.
+
+    `python -I`: ізольований режим викидає PYTHONPATH і site-packages
+    користувача, тож перевіряється САМЕ вміст рантайму, а не те, що випадково
+    лежить у середовищі машини збірки. Разом із цим `-I` включає `-E`, тобто
+    ігнорує ВСІ змінні `PYTHON*`, — тому UTF-8 задається прапорцем `-X utf8`, а
+    не `PYTHONUTF8`: інакше `APP_NAME` українською вбив би перевірку
+    UnicodeEncodeError на windows-раннері. `ASISTENT_STUB` не починається з
+    `PYTHON`, тож `-E` його не чіпає.
+    """
     py = python_executable(runtime_dir)
-    code = (
-        "import sys; from app import config, net_guard; "
-        "net_guard.install(); "
-        "print(sys.version.split()[0], config.APP_NAME)"
-    )
-    run([str(py), "-c", code], env={**os.environ, "ASISTENT_STUB": "1"})
+    run([str(py), "-I", "-X", "utf8", "-c", SELF_CHECK_CODE], env={**os.environ, "ASISTENT_STUB": "1"})
 
 
 def write_manifest(runtime_dir: Path, *, extras: list[str], size: int) -> dict:

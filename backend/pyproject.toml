@@ -10,6 +10,15 @@ dependencies = [
     # --- API-процес: жодного torch. Холодний старт ~0.6 с. ---
     "fastapi>=0.118",
     "uvicorn>=0.34",
+    # НЕ ОПЦІЙНА. FastAPI перевіряє наявність python-multipart у момент
+    # РЕЄСТРАЦІЇ маршруту, а не при першому запиті: будь-який параметр
+    # `Form(...)`/`UploadFile` (app/api/routes_documents.py) на імпорті кидає
+    # RuntimeError «Form data requires python-multipart to be installed», і
+    # процес падає ще до прив'язки порту. У .venv розробника пакет опинився
+    # транзитивно, тож локально все працювало, а в чистому рантаймі
+    # `uv pip install backend[worker]` його не було — і застосунок помирав на
+    # старті вже в зібраному інсталяторі. Оголошуємо явно.
+    "python-multipart>=0.0.20",
     "httpx>=0.28",
     "pydantic>=2.11",
     "pydantic-settings>=2.11",
@@ -57,12 +66,33 @@ eval = [
                              # у якого немає win_amd64 колеса.
 ]
 
+# `dev` — РІВНО ТЕ, ЩО СТАВИТЬ ШВИДКИЙ ГЕЙТ CI, і нічого більше.
+#
+# Тут лежали ще `sentence-transformers>=6.0` і `optimum[onnxruntime]>=1.24`, і
+# ця пара НЕРОЗВ'ЯЗНА: кожен `optimum[onnxruntime]` гілки 1.x обмежує
+# `transformers` згори (<4.49 … <4.53), а `sentence-transformers>=6.0` вимагає
+# `transformers>=5.0`; гілка optimum 2.x не сходиться з ним так само. Тобто
+# `pip install -e "backend[dev]"` у job `fast` падав із ResolutionImpossible на
+# ПЕРШОМУ ж кроці — ще до ruff, pytest і offline_check.py. Саме тому дешевий
+# гейт не спіймав відсутній `python-multipart`, хоча `helpers_api.py` імпортує
+# `app.main` і впав би на збиранні тестів: він просто ніколи не виконувався.
+#
+# PyYAML тут не випадково: без нього `pytest.importorskip("yaml")` у
+# test_packaging_tauri.py МОВЧКИ пропускає всі перевірки workflow-конфігів —
+# тобто рівно ті тести, які стережуть цей файл і release.yml.
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "ruff>=0.9",
-    # лише для експорту ONNX на машині розробника, ніколи не в постачанні
-    "sentence-transformers>=6.0",
+    "pyyaml>=6.0",
+]
+
+# Інструменти ручного експорту ONNX на машині розробника. НІКОЛИ не в
+# постачанні і НІКОЛИ в CI: тягнуть torch. Верхня межа на
+# sentence-transformers — не примха, а умова розв'язності разом з optimum
+# (перевірено `uv pip compile`: 5.7.0 + optimum 2.1.0 сходяться).
+export = [
+    "sentence-transformers>=3,<6",
     "optimum[onnxruntime]>=1.24",
 ]
 

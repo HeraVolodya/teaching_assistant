@@ -247,12 +247,20 @@ def sidecar_log_path() -> Path:
 
     Дублювання прикре, але альтернатива гірша: без цього шляху причина
     невдалого старту лишається у файлі, якого ніхто не читає.
+
+    ПОРЯДОК ГІЛОК ВАЖЛИВИЙ. У Rust `logs_dir` на macOS дорівнює
+    `~/Library/Logs/Asistent` БЕЗУМОВНО, і `ASISTENT_DATA_DIR` на нього не
+    впливає — перевизначається лише каталог даних. Тут гілка з override стояла
+    першою, тож із виставленим `ASISTENT_DATA_DIR` діагностика на macOS
+    показувала б порожню теку й казала «sidecar не стартував узагалі» саме
+    тоді, коли лог існує і містить причину. CI цього не бачив лише тому, що не
+    виставляє цю змінну.
     """
+    if platform.system() == "Darwin":
+        return Path.home() / "Library" / "Logs" / "Asistent" / "sidecar.log"
     override = os.environ.get("ASISTENT_DATA_DIR")
     if override:
         return Path(override) / "logs" / "sidecar.log"
-    if platform.system() == "Darwin":
-        return Path.home() / "Library" / "Logs" / "Asistent" / "sidecar.log"
     local = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     return local / "Asistent" / "logs" / "sidecar.log"
 
