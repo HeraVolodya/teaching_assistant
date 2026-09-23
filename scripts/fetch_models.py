@@ -265,13 +265,30 @@ CATALOG: tuple[ModelAsset, ...] = (
     ModelAsset(
         id="tiny-embedding",
         repo="sentence-transformers/all-MiniLM-L6-v2",
-        revision="main",
+        # РЕВІЗІЯ ПРИБИТА ДО КОМІТУ, А НЕ ДО `main`.
+        # Тут був `main`, і саме через це зелений конвеєр почервонів без жодної
+        # зміни в цьому репозиторії: апстрім перебудував теку `onnx/`, і крок
+        # «Моделі» впав з HTTP 404 на файлі, який учора існував. Гілка — рухома
+        # ціль, тож для CI вона означає «збірка залежить від чужих комітів».
+        # Оновлювати свідомо: перевірити список файлів через
+        # https://huggingface.co/api/models/<repo> і підставити новий sha.
+        revision="1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
         dest="embeddings/tiny-embedding",
         licence="Apache-2.0",
         purpose="Заглушка ембедера для CI",
-        approx_mb=23,
+        approx_mb=87,
         files=(
-            ModelFile("onnx/model_quantized.onnx", as_="model_int8.onnx"),
+            # fp32, А НЕ КВАНТОВАНА ВЕРСІЯ — І ЦЕ НЕ НЕДОГЛЯД.
+            # Апстрім замінив єдиний `model_quantized.onnx` (~23 МБ) на чотири
+            # файли під конкретні набори інструкцій: `qint8_arm64`,
+            # `qint8_avx512`, `qint8_avx512_vnni`, `quint8_avx2`. Матриця CI —
+            # це windows-latest (x86_64) І macos-26 (arm64), тож жоден із них
+            # не підходить обом. `model.onnx` архітектурно нейтральний.
+            # Ціна — 86 МБ замість 23, але крок «Моделі» кешується через
+            # actions/cache, тобто платимо один раз на зміну каталогу, а
+            # бюджет профілю `tiny` (<100 МБ, test_packaging_models.py)
+            # витримано.
+            ModelFile("onnx/model.onnx"),
             ModelFile("config.json"),
             ModelFile("tokenizer.json"),
             ModelFile("tokenizer_config.json"),
