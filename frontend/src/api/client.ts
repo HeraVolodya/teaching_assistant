@@ -6,12 +6,26 @@
  * `invoke()` Tauri, жодного IPC. Оболонка володіє лише вікном, нативними
  * діалогами й життєвим циклом sidecar.
  *
- * Другий інваріант: якщо sidecar не відповідає, застосунок не падає, а
- * переходить у ДЕМОНСТРАЦІЙНИЙ режим на типізованих даних
- * (`./mock/server.ts`). Це те саме рішення, що `ASISTENT_STUB=1` на бекенді:
- * інтерфейс має підніматися без жодної завантаженої моделі й без жодного
- * запущеного процесу. Режим ЧЕСНО позначається в шапці — мовчазна підміна
- * даних була б гіршою за їх відсутність.
+ * Другий інваріант: ДЕМОНСТРАЦІЙНИЙ режим на типізованих даних
+ * (`./mock/server.ts`) існує для РОЗРОБКИ ІНТЕРФЕЙСУ — щоб екрани піднімалися
+ * без жодного запущеного процесу. У ЗАПАКОВАНОМУ ЗАСТОСУНКУ він не вмикається
+ * ніколи.
+ *
+ * ЧОМУ ЦЕ ЖОРСТКЕ ПРАВИЛО, А НЕ ОБЕРЕЖНІСТЬ.
+ * Раніше `probeBackend` робив ОДИН запит із таймаутом 1.5 с і при будь-якій
+ * помилці мовчки вмикав демо назавжди. Вікно `main` створюється разом із
+ * процесом і вантажить SPA одразу (воно лише приховане), а Python-рантайм на
+ * 1.3 ГБ підіймається кілька секунд — тож у встановленому застосунку SPA
+ * стукала в порожній порт і йшла в демо ЩОРАЗУ, ще до того, як uvicorn зробить
+ * bind. Викладач бачив вигадані документи, вигадані оцінки якості розбору й
+ * вигадані цитати як справжні; його власні матеріали при цьому нікуди не
+ * зберігалися. У продукті, чия цінність тримається на довірі до цитат, це
+ * найгірша з можливих поведінок — гірша за білий екран.
+ *
+ * Тому тепер: чекаємо на sidecar до дедлайну (дзеркало `STARTUP_TIMEOUT` в
+ * `src-tauri/src/sidecar.rs`), а не 1.5 с; у демо падаємо ЛИШЕ за явним
+ * `VITE_API_MODE=demo` або в dev-збірці; у продакшн-збірці не відповівший
+ * sidecar — це чесна помилка старту, а не підроблені дані.
  */
 
 import type { HealthStatus } from "./types";
@@ -141,27 +155,111 @@ export function useTransport(next: Transport): void {
 }
 
 /**
- * Одноразова перевірка на старті: чи живий sidecar.
+ * Скільки загалом чекаємо на sidecar у ЗАПАКОВАНОМУ застосунку.
  *
- * Таймаут 1.5 с, а не 5: якщо sidecar не піднявся, викладач має побачити
- * інтерфейс, а не білий екран на п'ять секунд.
+ * ДЗЕРКАЛО `STARTUP_TIMEOUT` із `src-tauri/src/sidecar.rs`. Оболонка чекає на
+ * `/api/health` рівно стільки ж і лише після цього показує головне вікно, тож
+ * менше значення тут означало б, що SPA здається раніше за оболонку — тобто
+ * рівно той баг, заради якого це написано.
  */
-export async function probeBackend(): Promise<HealthStatus> {
-  if (import.meta.env.VITE_API_MODE === "demo") return installDemo();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1500);
-  try {
-    const health = await httpTransport.request<HealthStatus>("/health", {
-      signal: controller.signal,
-    });
-    mode = "http";
-    current = httpTransport;
-    return { ...health, demo: false };
-  } catch {
-    return installDemo();
-  } finally {
-    clearTimeout(timer);
+export const STARTUP_DEADLINE_MS = 60_000;
+
+/**
+ * Дедлайн у dev-збірці. Короткий свідомо: там демо — робочий інструмент, і
+ * змушувати розробника інтерфейсу дивитись хвилину в порожній екран лише
+ * заради симетрії з продакшном немає сенсу.
+ */
+export const DEV_DEADLINE_MS = 2_000;
+
+/**
+ * Таймаут ОДНІЄЇ спроби. Лишається коротким, щоб зависла відповідь не з'їла
+ * весь бюджет: поки порт не слухається, `fetch` падає миттєво, а от відкрите,
+ * але мовчазне з'єднання інакше блокувало б до самого дедлайну.
+ */
+const ATTEMPT_TIMEOUT_MS = 1_500;
+const RETRY_INTERVAL_MS = 250;
+
+/** Sidecar не відповів за відведений час. У продакшні це кінець старту. */
+export class BackendUnavailableError extends Error {
+  readonly attempts: number;
+  readonly elapsedMs: number;
+  readonly lastError: unknown;
+
+  constructor(attempts: number, elapsedMs: number, lastError: unknown) {
+    super(`Локальний сервер застосунку не відповів за ${Math.round(elapsedMs / 1000)} с.`);
+    this.name = "BackendUnavailableError";
+    this.attempts = attempts;
+    this.elapsedMs = elapsedMs;
+    this.lastError = lastError;
   }
+}
+
+export interface ProbeOptions {
+  /** Загальний бюджет очікування. */
+  deadlineMs?: number;
+  attemptTimeoutMs?: number;
+  retryIntervalMs?: number;
+  /**
+   * Чи дозволено тихо перейти на демонстраційні дані, коли бюджет вичерпано.
+   * За замовчуванням — ЛИШЕ в dev-збірці. Не вмикати для постачання.
+   */
+  allowDemoFallback?: boolean;
+  /** Точки впливу для тестів: без них тест чекав би реальні секунди. */
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  onAttempt?: (attempt: number, elapsedMs: number) => void;
+}
+
+/**
+ * Перевірка на старті: чи живий sidecar. Повторюється до дедлайну.
+ *
+ * Повертає `health` із `demo: false`, якщо це справжній sidecar. Якщо бюджет
+ * вичерпано — або демо (dev), або `BackendUnavailableError` (постачання).
+ */
+export async function probeBackend(options: ProbeOptions = {}): Promise<HealthStatus> {
+  // Явний намір розробника — єдиний спосіб дістати демо в зібраному вигляді.
+  if (import.meta.env.VITE_API_MODE === "demo") return installDemo();
+
+  const allowDemoFallback = options.allowDemoFallback ?? Boolean(import.meta.env.DEV);
+  const deadlineMs =
+    options.deadlineMs ?? (allowDemoFallback ? DEV_DEADLINE_MS : STARTUP_DEADLINE_MS);
+  const attemptTimeoutMs = options.attemptTimeoutMs ?? ATTEMPT_TIMEOUT_MS;
+  const retryIntervalMs = options.retryIntervalMs ?? RETRY_INTERVAL_MS;
+  const now = options.now ?? (() => Date.now());
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
+
+  const startedAt = now();
+  let attempts = 0;
+  let lastError: unknown;
+
+  // Дедлайн перевіряється ПІСЛЯ спроби: одна спроба відбувається завжди,
+  // навіть із нульовим бюджетом, інакше `deadlineMs: 0` у тесті не означав би
+  // нічого осмисленого.
+  for (;;) {
+    attempts += 1;
+    options.onAttempt?.(attempts, now() - startedAt);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), attemptTimeoutMs);
+    try {
+      const health = await httpTransport.request<HealthStatus>("/health", {
+        signal: controller.signal,
+      });
+      mode = "http";
+      current = httpTransport;
+      return { ...health, demo: false };
+    } catch (error) {
+      lastError = error;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (now() - startedAt >= deadlineMs) break;
+    await sleep(retryIntervalMs);
+  }
+
+  if (allowDemoFallback) return installDemo();
+  throw new BackendUnavailableError(attempts, now() - startedAt, lastError);
 }
 
 async function installDemo(): Promise<HealthStatus> {

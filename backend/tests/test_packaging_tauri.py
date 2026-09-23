@@ -239,6 +239,25 @@ def test_health_шлях_узгоджений_зі_скриптом_димово
     assert f'HEALTH_PATH = "{match.group(1)}"' in smoke
 
 
+def test_фронтенд_чекає_на_sidecar_не_менше_за_оболонку() -> None:
+    """SPA не має права здатися раніше, ніж оболонка визнає старт провальним.
+
+    Вікно `main` створюється разом із процесом і вантажить SPA одразу — воно
+    лише приховане. Тобто проба sidecar-а змагається з холодним стартом Python,
+    і поки дедлайн у `client.ts` був 1.5 с, SPA програвала цю гонку ЩОРАЗУ:
+    мовчки вмикала демонстраційний транспорт, і викладач бачив вигаданий корпус
+    із вигаданими цитатами замість власних матеріалів. Дві константи мусять
+    лишатися однією величиною.
+    """
+    rust = read(TAURI_DIR / "src" / "sidecar.rs")
+    client = read(REPO_ROOT / "frontend" / "src" / "api" / "client.ts")
+    shell = re.search(r"STARTUP_TIMEOUT:\s*Duration\s*=\s*Duration::from_secs\((\d+)\)", rust)
+    spa = re.search(r"STARTUP_DEADLINE_MS\s*=\s*([\d_]+)", client)
+    assert shell, "у sidecar.rs немає константи STARTUP_TIMEOUT"
+    assert spa, "у client.ts немає константи STARTUP_DEADLINE_MS"
+    assert int(spa.group(1).replace("_", "")) == int(shell.group(1)) * 1000
+
+
 # ------------------------------------------------------------------ workflows
 yaml = pytest.importorskip("yaml", reason="PyYAML потрібен лише для перевірки CI-конфігів")
 

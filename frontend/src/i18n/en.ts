@@ -14,6 +14,17 @@ export const en: Dictionary = {
     offline: "No connection",
     loading: "Loading…",
   },
+  startup: {
+    waiting: "Starting the application service…",
+    waitingHint: "The first launch after installation takes longer than the rest.",
+    failedTitle: "The application service did not respond",
+    failedBody:
+      "The server did not come up within {{seconds}} s, so no materials were loaded. The application " +
+      "stopped here on purpose: showing a sample instead of your documents would pass invented " +
+      "citations off as real ones.",
+    failedLog: "The reason is in the startup log:",
+    retry: "Try again",
+  },
   nav: {
     assistants: "Assistants",
     chat: "Questions",
