@@ -195,10 +195,18 @@ async def test_inline_supervisor_reports_completed_jobs(tmp_path) -> None:
     try:
         import asyncio
 
+        # ЧЕКАЄМО НА ОБИДВІ ВЛАСТИВОСТІ, А НЕ ЛИШЕ НА СТАТУС.
+        # READY комітиться в БД раніше, ніж конвеєр добігає свого хвоста й
+        # супервізор рахує завдання завершеним — той самий зсув, через який
+        # падав test_api_e2e.py на раннері. Зупинка в цьому вікні скасовувала
+        # роботу до інкременту лічильника, і тест падав приблизно раз на
+        # двадцять прогонів навіть на незавантаженій машині.
+        document = None
         for _ in range(400):
             with db.connection() as con:
                 document = DocumentRepo(con).get(document_id)
-            if document is not None and document.status is DocStatus.READY:
+            ready = document is not None and document.status is DocStatus.READY
+            if ready and supervisor.status()["completed"] >= 1:
                 break
             await asyncio.sleep(0.01)
     finally:

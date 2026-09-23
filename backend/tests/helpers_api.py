@@ -30,6 +30,7 @@ __all__ = [
     "read_sse",
     "sse_probe",
     "upload_text",
+    "wait_for_event",
     "wait_for_status",
 ]
 
@@ -140,6 +141,60 @@ async def wait_for_status(
         await asyncio.sleep(0.02)
     raise AssertionError(
         f"Документ {document_id} не досяг статусу {target} за {timeout} с; останній стан: {last}"
+    )
+
+
+async def wait_for_event(
+    client: httpx.AsyncClient,
+    event_type: str,
+    *,
+    match: dict[str, Any] | None = None,
+    # Рівно місткість кільцевого буфера (`EventBus.__init__`, events.py). Менше
+    # означало б чекати на подію, яка вже виїхала з вікна вибірки, а не з
+    # буфера, — і діагностувати це довелося б удруге.
+    limit: int = 512,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Дочекатись події у спільному каналі `/api/events/history`.
+
+    ЧОМУ ЧЕКАТИ, А НЕ ЧИТАТИ ОДРАЗУ ПІСЛЯ `wait_for_status`.
+    Статус документа стає READY у БД РАНІШЕ, ніж публікується `doc.ready`:
+    `_finish_document` комітить READY, і лише потім конвеєр робить
+    `mark_dirty`, `enqueue_once`, оновлює трекер, пише чекпойнт і телеметрію —
+    і аж наприкінці викликає `emit` (app/jobs/pipeline.py). `wait_for_status`
+    повертає в цьому вікні, тож негайне читання історії перевіряє не наявність
+    події, а те, чи встиг планувальник, — тобто гонку.
+
+    Порядок «спершу статус, потім подія» навмисний і правильний: подія про
+    готовність не має випереджати стан, який вона описує, інакше клієнт піде
+    перечитувати документ і побачить його ще не готовим. Отже, чекати мусить
+    тест, а не продукт — міняти порядок у конвеєрі було б виправленням не того
+    боку.
+
+    На машині розробника гонка не відтворювалась майже ніколи, а на
+    завантаженому раннері GitHub впала. Відтворюється детерміновано, якщо
+    вставити затримку між комітом статусу й `emit`.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    seen: list[dict[str, Any]] = []
+    while True:
+        response = await client.get("/api/events/history", params={"limit": limit})
+        response.raise_for_status()
+        seen = response.json()
+        for event in reversed(seen):
+            if event["type"] != event_type:
+                continue
+            data = event.get("data") or {}
+            if match and any(data.get(key) != value for key, value in match.items()):
+                continue
+            return event
+        if loop.time() >= deadline:
+            break
+        await asyncio.sleep(0.02)
+    raise AssertionError(
+        f"Подію {event_type!r} з {match!r} не опубліковано за {timeout} с; "
+        f"останні типи в каналі: {[e['type'] for e in seen[-20:]]}"
     )
 
 

@@ -22,6 +22,7 @@ from tests.helpers_api import (
     make_settings,
     read_sse,
     upload_text,
+    wait_for_event,
     wait_for_status,
 )
 
@@ -47,10 +48,14 @@ async def test_end_to_end_question_returns_cited_answer(tmp_path) -> None:
         assert ready["pageCount"] >= 1
         assert ready["qualityGrade"] is not None
 
-        # Подія doc.ready дійшла до єдиного каналу.
-        history = (await client.get("/api/events/history", params={"limit": 200})).json()
-        ready_events = [e for e in history if e["type"] == "doc.ready"]
-        assert ready_events and ready_events[-1]["data"]["docId"] == document["id"]
+        # Подія doc.ready дійшла до єдиного каналу. САМЕ ДОЧЕКАТИСЬ: конвеєр
+        # комітить статус READY раніше, ніж публікує подію, тож читання історії
+        # одразу після `wait_for_status` перевіряло б планувальник, а не канал
+        # (докладно — у `wait_for_event`).
+        ready_event = await wait_for_event(
+            client, "doc.ready", match={"docId": document["id"]}
+        )
+        assert ready_event["data"]["docId"] == document["id"]
 
         # Сторінки з мітками й якістю доступні для перегляду.
         pages = (await client.get(f"/api/documents/{document['id']}/pages")).json()
