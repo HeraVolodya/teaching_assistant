@@ -438,7 +438,13 @@ def _documents_summary(services: Services, include_titles: bool) -> list[dict[st
         }
     out: list[dict[str, Any]] = []
     for row in rows:
-        item = {k: row[k] for k in row if k != "title"}
+        # `dict(row)`, А НЕ `for k in row`. `sqlite3.Row` при ітерації віддає
+        # ЗНАЧЕННЯ, а не ключі, тож `row[k]` шукав би колонку за її ж вмістом і
+        # падав з `IndexError: No item with that key`. У вихідному коді стояло
+        # `row.keys()`; `.keys()` прибрало автовиправлення ruff SIM118 (коміт
+        # d040fca) — для словника воно слушне, для Row хибне. Форма через
+        # `.items()` цього не переживе повторно: SIM118 до неї не застосовна.
+        item = {k: v for k, v in dict(row).items() if k != "title"}
         item["chunks"] = counts.get(row["id"], 0)
         if include_titles:
             item["title"] = row["title"]
