@@ -263,6 +263,23 @@ export interface ChatMessage {
   tokensOut: number | null;
   createdAt: string;
   citations: { ordinal: number; chunkUid: string }[];
+  /** Файл, який викладач попросив («зроби презентацію …»). Немає — звичайна відповідь. */
+  document?: MessageDocument | null;
+}
+
+/** Формати файлів, які асистент збирає з відповіді (`app/export`). */
+export type DocumentFormat = "pptx" | "docx" | "xlsx";
+
+/**
+ * Картка файлу під відповіддю. Байтів тут немає: їх збирає
+ * `GET /messages/{id}/file` щоразу заново з тексту повідомлення.
+ */
+export interface MessageDocument {
+  format: DocumentFormat;
+  title: string;
+  filename: string;
+  /** Що вийшло: слайди, розділи, рядки таблиці, питання самоперевірки — для підпису на картці. */
+  stats: { slides?: number; sections?: number; rows?: number; tables?: number; questions?: number };
 }
 
 export interface ChatIn {
@@ -298,7 +315,15 @@ export interface ChatDebugEvent {
   abstained?: boolean;
   confidence?: number | null;
   latencyMs?: Record<string, number>;
+  /** Формат замовленого файлу — «Готую презентацію…» замість «Формую відповідь…». */
+  document?: DocumentFormat | null;
   [key: string]: unknown;
+}
+
+/** Відповідь стала файлом. Приходить після змісту й цитат, перед `chat.done`. */
+export interface ChatFileEvent {
+  messageId: string;
+  document: MessageDocument;
 }
 
 /**
@@ -388,6 +413,7 @@ export type AppEvent =
   | { type: "chat.debug"; id: number; data: ChatDebugEvent }
   | { type: "chat.done"; id: number; data: ChatDoneEvent }
   | { type: "chat.error"; id: number; data: ChatErrorEvent }
+  | { type: "chat.file"; id: number; data: ChatFileEvent }
   | { type: "model.download"; id: number; data: ModelDownloadEvent }
   | { type: "worker.status"; id: number; data: WorkerStatusEvent };
 

@@ -54,6 +54,7 @@ from app.generation.citations import (
     record_unresolved,
 )
 from app.generation.prompt_builder import (
+    AnswerTask,
     abstain_text,
     assign_ordinals,
     build_map_prompt,
@@ -158,7 +159,10 @@ class Generator:
         message_id: str | None = None,
         detailed: bool = False,
         force_map_reduce: bool = False,
+        task: AnswerTask | None = None,
     ) -> AsyncIterator[AnswerChunk]:
+        """`task` — інше завдання над тими самими доказами (план презентації,
+        таблиця): свої ПРАВИЛА й бюджет виводу, решта — та сама."""
         started = time.perf_counter()
         evidence = list(chunks)
         # Номери [n] призначаються ОДИН раз на весь запит. У map-reduce кожен
@@ -174,6 +178,8 @@ class Generator:
 
         params = replace(generation_params(self.config, detailed=detailed),
                          reasoning=self.reasoning)
+        if task is not None:
+            params = replace(params, max_tokens=task.max_tokens)
         kept, cap, truncated = fit_evidence(
             evidence,
             context_tokens=self.context_tokens,
@@ -192,6 +198,11 @@ class Generator:
             truncated and cap is not None and cap < self.MIN_USEFUL_CHUNK_CHARS
             and docs_after > 1
         )
+        if task is not None:
+            # Документ — одна зв'язна структура (слайди, розділи, таблиця).
+            # REDUCE звів би її до суцільного тексту, тож для завдань лише
+            # прямий прохід із тими доказами, що вмістилися.
+            needs_map = False
 
         try:
             if needs_map:
@@ -204,7 +215,7 @@ class Generator:
                 async for ac in self._answer_direct(
                     question, kept, params=params, cap=cap, history=history,
                     cancel=cancel, debug=debug, message_id=message_id, started=started,
-                    dropped=len(evidence) - len(kept),
+                    dropped=len(evidence) - len(kept), task=task,
                 ):
                     yield ac
         except LlmCancelled:
@@ -261,10 +272,11 @@ class Generator:
         message_id: str | None,
         started: float,
         dropped: int,
+        task: AnswerTask | None = None,
     ) -> AsyncIterator[AnswerChunk]:
         bundle = build_prompt_bundle(
             question, evidence, self.config, persona=self.persona,
-            history=history, char_budget=cap,
+            history=history, char_budget=cap, task=task,
         )
         if dropped or cap:
             yield AnswerChunk(kind="debug", payload={

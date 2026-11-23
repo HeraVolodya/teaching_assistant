@@ -134,7 +134,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
-        expose_headers=["X-Message-Id", "Content-Range", "Accept-Ranges"],
+        # Content-Disposition — щоб UI взяв назву файлу («Види вогню.xlsx») від
+        # сервера, а не вигадував її вдруге: інакше CORS ховає заголовок від JS.
+        expose_headers=["X-Message-Id", "Content-Range", "Accept-Ranges", "Content-Disposition"],
     )
 
     application.include_router(routes_system.router, prefix=API_PREFIX)

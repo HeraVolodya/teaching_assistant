@@ -18,6 +18,7 @@ import type {
   ChatMessage,
   ChatSession,
   DocumentDto,
+  DocumentFormat,
   HealthStatus,
   IngestMode,
   LmStudioStartResult,
@@ -139,6 +140,14 @@ export const askQuestion = (payload: ChatIn, signal: AbortSignal) =>
 
 export const whyThisAnswer = (messageId: string) =>
   api.get<WhyThisAnswer>(`/messages/${messageId}/why`);
+
+/**
+ * Файл із відповіді асистента. Без `format` — той, що просили в чаті
+ * («зроби презентацію …»); з `format` — будь-яку відповідь, скажімо, у Word.
+ * Назву файлу віддає сервер у Content-Disposition (`lib/download.ts`).
+ */
+export const fetchMessageFile = (messageId: string, format?: DocumentFormat) =>
+  transport().raw(`/messages/${messageId}/file${format ? `?format=${format}` : ""}`);
 
 export const sendFeedback = (
   messageId: string,

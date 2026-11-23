@@ -70,10 +70,52 @@ def _first_sentences(text: str, limit: int = 2) -> str:
     return out[:400].rstrip()
 
 
+# Маркери форми документа з правил `app/export/tasks.py` (SHAPE_MARKERS). Рядки
+# продубльовано свідомо — бекенд LLM не імпортує модуль файлів; збіг стереже тест.
+_DOCUMENT_SHAPES = {
+    "ФОРМАТ — ПРЕЗЕНТАЦІЯ": "slides",
+    "ФОРМАТ — ДОКУМЕНТ": "text",
+    "ФОРМАТ — ТАБЛИЦЯ": "table",
+}
+
+
+def _stub_document(shape: str, question: str, blocks: list[tuple[int, str, str]]) -> str:
+    """Markdown потрібної форми з поданих фрагментів — щоб увесь шлях «прохання →
+    файл» працював у CI й на машині без моделі так само, як із нею."""
+    topic = question.rstrip(" ?.!")
+    lines = [f"# Матеріали за запитом: {topic}" if topic else "# Матеріали з бази знань", ""]
+    if shape == "table":
+        lines += ["| Положення | Джерело |", "| --- | --- |"]
+        for ordinal, header, body in blocks:
+            gist = _first_sentences(body, limit=1) or header
+            lines.append(f"| {gist.replace('|', '/')} | [{ordinal}] |")
+        return "\n".join(lines)
+    for ordinal, header, body in blocks:
+        parts = [p.strip() for p in header.split(" — ") if p.strip()]
+        # «Документ — Розділ › Підрозділ — с. 10»: назва слайда — найглибший розділ.
+        heading = parts[1].split("›")[-1].strip() if len(parts) > 2 else (parts[0] if parts else "")
+        lines.append(f"## {heading or f'Джерело {ordinal}'}")
+        sentences = [s for s in _SENTENCE_END.split(" ".join(body.split())) if s][:3]
+        if shape == "slides":
+            lines += [f"- {s} [{ordinal}]" for s in sentences or [header]]
+        else:
+            lines.append(" ".join(f"{s} [{ordinal}]" for s in sentences or [header]))
+        lines.append("")
+    if shape == "slides":
+        # Як просять правила презентації: питання з відповіддю «на клік».
+        lines.append("## Питання для самоперевірки")
+        for ordinal, header, body in blocks[:3]:
+            gist = _first_sentences(body, limit=1) or header
+            lines.append(f"- Що сказано в джерелі {ordinal}? — {gist} [{ordinal}]")
+    return "\n".join(lines).rstrip()
+
+
 def compose_stub_answer(messages: Messages) -> str:
     """Побудувати відповідь із того, що реально є в промпті.
 
-    Три режими, у порядку перевірки:
+    Чотири режими, у порядку перевірки:
+      0. правила просять форму документа (`app/export/tasks.py`) → Markdown
+         цієї форми: слайди, розділи або таблиця з маркерами [n];
       1. є блоки ДЖЕРЕЛА → зведена відповідь із маркерами [n];
       2. немає блоків, але є маркери [n] (це крок REDUCE у map-reduce, де
          «джерелами» слугують часткові відповіді) → зберегти ВСІ маркери,
@@ -89,6 +131,9 @@ def compose_stub_answer(messages: Messages) -> str:
         question = qm.group(1).strip()
 
     blocks = _split_source_blocks(prompt)
+    shape = next((s for marker, s in _DOCUMENT_SHAPES.items() if marker in prompt), None)
+    if blocks and shape is not None:
+        return _stub_document(shape, question, blocks)
     if blocks:
         lead = f"Щодо запиту «{question}» надані матеріали дають таке." if question \
             else "Надані матеріали дають таке."

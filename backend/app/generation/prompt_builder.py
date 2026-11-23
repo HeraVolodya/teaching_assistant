@@ -43,6 +43,7 @@ __all__ = [
     "SYSTEM_RULES_UK",
     "UK_CHARS_PER_TOKEN",
     "UK_TOKENS_PER_WORD",
+    "AnswerTask",
     "PromptBundle",
     "abstain_text",
     "assign_ordinals",
@@ -193,6 +194,22 @@ def format_evidence(chunks: list[RetrievedChunk], *, char_budget: int | None = N
     return "\n\n".join(parts)
 
 
+@dataclass(frozen=True, slots=True)
+class AnswerTask:
+    """Інше завдання над тими самими джерелами: не відповідь, а, скажімо,
+    план презентації чи таблиця (`app/export/tasks.py`).
+
+    Змінюється лише блок ПРАВИЛ тиру B і бюджет виводу. Системний префікс
+    лишається БАЙТ-ІДЕНТИЧНИМ (KV-кеш), сендвіч «питання — джерела — правила —
+    питання» теж: саме цю розкладку мала модель реально виконує.
+    """
+
+    rules: str
+    max_tokens: int
+    # Останній рядок сендвіча — те, що модель продовжує.
+    label: str = "Результат"
+
+
 @dataclass(slots=True)
 class PromptBundle:
     messages: Messages
@@ -210,16 +227,21 @@ def _user_message_tier_b(
     *,
     tier: str = "compact",
     history_block: str = "",
+    task: AnswerTask | None = None,
 ) -> str:
     """Сендвіч: питання — джерела — правила — питання."""
-    rules = _TIER_B_RULES_FULL if tier == "full" else _TIER_B_RULES_COMPACT
+    if task is not None:
+        rules, label = task.rules, task.label
+    else:
+        rules = _TIER_B_RULES_FULL if tier == "full" else _TIER_B_RULES_COMPACT
+        label = "Відповідь"
     head = f"Питання: {question.strip()}"
     blocks = [head]
     if history_block:
         blocks.append(f"ПОПЕРЕДНІ ХОДИ:\n{history_block}")
     blocks.append(f"ДЖЕРЕЛА:\n{evidence_block}")
     blocks.append(rules)
-    blocks.append(f"{head}\nВідповідь:")
+    blocks.append(f"{head}\n{label}:")
     return "\n\n".join(blocks)
 
 
@@ -258,6 +280,7 @@ def build_prompt_bundle(
     persona: str = "",
     history: list[dict[str, str]] | None = None,
     char_budget: int | None = None,
+    task: AnswerTask | None = None,
 ) -> PromptBundle:
     """Те саме, але з мапою цитат і оцінкою бюджету — це потрібно генератору."""
     cfg = config or AssistantConfig()
@@ -268,6 +291,7 @@ def build_prompt_bundle(
         format_evidence(evidence, char_budget=char_budget),
         tier=cfg.prompt_tier,
         history_block=_history_block(history),
+        task=task,
     )
     messages: Messages = [
         {"role": "system", "content": system},

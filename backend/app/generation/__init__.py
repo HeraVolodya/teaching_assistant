@@ -17,6 +17,7 @@ from app.generation.citations import (
 from app.generation.generator import CancelToken, Generator
 from app.generation.prompt_builder import (
     SYSTEM_RULES_UK,
+    AnswerTask,
     PromptBundle,
     abstain_text,
     build_map_prompt,
@@ -31,6 +32,7 @@ from app.generation.prompt_builder import (
 
 __all__ = [
     "SYSTEM_RULES_UK",
+    "AnswerTask",
     "CancelToken",
     "Generator",
     "PromptBundle",

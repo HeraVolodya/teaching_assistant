@@ -25,6 +25,15 @@
 Дати моделі докази, які код уже визнав недостатніми, — це дати їй шанс
 вигадати. Поріг живе в `AssistantConfig`, тобто в коді, а не в промпті
 (контракт, правило 8).
+
+ПРОХАННЯ ПРО ФАЙЛ — ТОЙ САМИЙ ХІД, НЕ ОКРЕМИЙ МЕХАНІЗМ
+«Зроби презентацію на 5 слайдів про …» розпізнається до пошуку
+(`app/export/intent.py`). Шукається ТЕМА без командних слів, далі та сама
+генерація пише Markdown за правилами формату — і він стрімиться в чат із
+посиланнями, як звичайна відповідь: викладач бачить зміст і перевіряє його ще
+до того, як відкрив файл. Наприкінці — кадр `chat.file`; байти збирає
+`GET /messages/{id}/file` щоразу заново з тексту повідомлення. Ті самі пороги
+утримання діють і тут: без опори в матеріалах файл не створюється.
 """
 
 from __future__ import annotations
@@ -37,14 +46,15 @@ import time
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response, StreamingResponse
 
 from app.api.events import (
     CHAT_CITATIONS,
     CHAT_DEBUG,
     CHAT_DONE,
     CHAT_ERROR,
+    CHAT_FILE,
     CHAT_PROGRESS,
     CHAT_TOKEN,
     sse_frame,
@@ -67,6 +77,8 @@ from app.db.repositories import (
     TelemetryRepo,
 )
 from app.domain import Assistant, Citation, RetrievalDebug, RetrievedChunk
+from app.export import FORMATS, DocumentRequest, detect_document_request, document_task
+from app.export.store import StoredDocument, session_documents
 
 __all__ = ["router"]
 
@@ -150,7 +162,8 @@ def session_messages(request: Request, session_id: str) -> list[MessageOut]:
     services.schedule_llm_warmup()
     with services.db.connection() as con:
         rows = ChatRepo(con).messages(session_id)
-    return [_message_out(r) for r in rows]
+        documents = session_documents(con, session_id)
+    return [_message_out(r, documents.get(r["id"])) for r in rows]
 
 
 @router.delete("/sessions/{session_id}/messages", status_code=204)
@@ -203,7 +216,7 @@ def _session_row(services: Services, session_id: str) -> dict[str, Any]:
     return dict(row)
 
 
-def _message_out(row: dict[str, Any]) -> MessageOut:
+def _message_out(row: dict[str, Any], document: StoredDocument | None = None) -> MessageOut:
     mapping = json.loads(row["citation_map_json"] or "{}")
     return MessageOut(
         id=row["id"], session_id=row["session_id"], role=row["role"],
@@ -214,6 +227,7 @@ def _message_out(row: dict[str, Any]) -> MessageOut:
             {"ordinal": int(k), "chunkUid": v}
             for k, v in sorted(mapping.items(), key=lambda kv: int(kv[0]))
         ],
+        document=document.payload() if document is not None else None,
     )
 
 
@@ -279,11 +293,35 @@ async def _chat_stream(
     ttft_ms: int | None = None
     tokens_out = 0
     model_id: str | None = None
+    had_error = False
+    # (назва, підсумок, зміст без вступу) зібраного файлу
+    built: tuple[str, dict[str, int], str] | None = None
 
     def frame(event: str, data: dict[str, Any]) -> str:
         """Кадр іде і в тіло відповіді, і в спільний канал подій."""
         published = services.events.publish(event, data)
         return sse_frame(event, data, event_id=published.id)
+
+    # --- прохання про файл --------------------------------------------------
+    doc_request = detect_document_request(question)
+    search_query = question
+    prompt_question = question
+    if doc_request is not None:
+        # «Зроби з цього презентацію» — тема попереднього питання.
+        topic = doc_request.topic or await asyncio.to_thread(
+            _previous_topic, services, session_id, message_id
+        )
+        if not topic:
+            async for chunk in _ask_for_topic(services, doc_request, session_id=session_id,
+                                              message_id=message_id, question=question,
+                                              started=started, frame=frame):
+                yield chunk
+            return
+        search_query = topic
+        if not doc_request.topic:
+            # Модель теж мусить знати тему: «зроби з цього презентацію» без неї
+            # дало на живих даних презентацію «про все, що знайшлося».
+            prompt_question = f"{question.rstrip(' .!?')} (тема: {topic})"
 
     try:
         # LM Studio піднімає модель ПАРАЛЕЛЬНО з пошуком: JIT-завантаження
@@ -315,7 +353,7 @@ async def _chat_stream(
                 loop.call_soon_threadsafe(progress.put_nowait, (stage, done, total))
 
         search = asyncio.ensure_future(asyncio.to_thread(
-            _retrieve, services, assistant, question, payload, on_progress
+            _retrieve, services, assistant, search_query, payload, on_progress
         ))
         # Якщо вкладку закриють посеред пошуку, результат ніхто не забере; без
         # цього збій такого «покинутого» пошуку лягав би в лог як незабраний виняток.
@@ -335,6 +373,8 @@ async def _chat_stream(
             "abstained": abstained,
             "confidence": debug.abstain_confidence,
             "latencyMs": debug.latency_ms,
+            # Формат замовленого файлу — щоб UI писав «Готую презентацію…».
+            "document": doc_request.format if doc_request is not None else None,
         })
 
         # --- генерація ----------------------------------------------------
@@ -368,8 +408,9 @@ async def _chat_stream(
         cancel = CancelToken()
 
         async for chunk in generator.answer(
-            question, evidence, debug=debug, message_id=message_id,
+            prompt_question, evidence, debug=debug, message_id=message_id,
             detailed=payload.detailed, cancel=cancel,
+            task=document_task(doc_request) if doc_request is not None else None,
         ):
             if await request.is_disconnected():
                 # Вкладку закрили. Скасовуємо генерацію: локальна модель
@@ -390,6 +431,7 @@ async def _chat_stream(
             elif chunk.kind == "debug":
                 yield frame(CHAT_DEBUG, {"messageId": message_id, **(chunk.payload or {})})
             elif chunk.kind == "error":
+                had_error = True
                 yield frame(CHAT_ERROR, {
                     "messageId": message_id,
                     "errorCode": str(chunk.payload),
@@ -405,6 +447,24 @@ async def _chat_stream(
                     ttft_ms = result.ttft_ms
                     tokens_out = result.tokens_out or tokens_out
                     model_id = result.model_id or model_id
+
+        if doc_request is not None and not (abstained or had_error or cancel.is_set()):
+            # Файл перевіряється ЗБИРАННЯМ, а не лише розбором: зламаний на
+            # якомусь абзаці збирач краще побачити зараз, ніж на «Завантажити».
+            built = await asyncio.to_thread(
+                _build_document, doc_request, "".join(text_parts), evidence, search_query
+            )
+            if built is None:
+                yield frame(CHAT_ERROR, {
+                    "messageId": message_id,
+                    "errorCode": "DOCUMENT_EMPTY",
+                    "message": "Модель не повернула змісту, з якого можна зібрати файл.",
+                    "hint": "Повторіть прохання або уточніть тему.",
+                })
+            else:
+                # В історії — той самий зміст, що у файлі, без вступу на
+                # кшталт «не можу створити файл, але ось структура».
+                text_parts = [built[2]]
     except Exception as exc:
         log.exception("Помилка під час відповіді")
         yield frame(CHAT_ERROR, {
@@ -428,6 +488,15 @@ async def _chat_stream(
         )
         _maybe_title(services, session_id, question)
 
+    if built is not None and doc_request is not None:
+        # Після запису тексту, не раніше: файл збирається саме з нього, тож
+        # кнопка «Завантажити» не може з'явитися раніше за свій зміст.
+        document = await asyncio.to_thread(
+            _save_document, services, message_id, doc_request, built[0], built[1], started=started
+        )
+        if document is not None:
+            yield frame(CHAT_FILE, {"messageId": message_id, "document": document})
+
     yield frame(CHAT_DONE, {
         "messageId": message_id,
         "abstained": abstained,
@@ -436,6 +505,139 @@ async def _chat_stream(
         "citations": len(citations),
         "elapsedMs": int((time.perf_counter() - started) * 1000),
     })
+
+
+# ------------------------------------------------------------------ файли
+_TOPIC_HINTS = {
+    "pptx": "Зроби презентацію на 5 слайдів про обов'язки старшого офіцера батареї",
+    "docx": "Створи конспект про вогневу позицію батареї",
+    "xlsx": "Склади таблицю видів вогню артилерії",
+}
+
+
+async def _ask_for_topic(
+    services: Services,
+    doc_request: DocumentRequest,
+    *,
+    session_id: str,
+    message_id: str,
+    question: str,
+    started: float,
+    frame: Callable[[str, dict[str, Any]], str],
+) -> AsyncIterator[str]:
+    """«Зроби з цього таблицю» на початку розмови: шукати нема чого.
+
+    Відповідь — підказка, а не помилка: прохання зрозуміле, бракує лише теми,
+    і приклад одразу показує, як її назвати.
+    """
+    text = (
+        "Уточніть, будь ласка, тему — про що саме зібрати файл. Наприклад: "
+        f"«{_TOPIC_HINTS[doc_request.format]}»."
+    )
+    words = text.split(" ")
+    for index, word in enumerate(words):
+        yield frame(CHAT_TOKEN, {"messageId": message_id, "delta": word if index == 0 else f" {word}"})
+    _persist_answer(services, message_id=message_id, content=text, citation_map={}, debug=None,
+                    abstained=False, model_id=None, ttft_ms=None, tokens_out=0)
+    _maybe_title(services, session_id, question)
+    yield frame(CHAT_DONE, {
+        "messageId": message_id, "abstained": False, "tokensOut": 0, "ttftMs": None,
+        "citations": 0, "elapsedMs": int((time.perf_counter() - started) * 1000),
+    })
+
+
+def _previous_topic(services: Services, session_id: str, message_id: str) -> str:
+    from app.export.store import previous_topic
+
+    with services.db.connection() as con:
+        return previous_topic(con, session_id, message_id)
+
+
+def _build_document(
+    doc_request: DocumentRequest, text: str, evidence: list[RetrievedChunk], fallback_title: str
+) -> tuple[str, dict[str, int], str] | None:
+    """Розібрати й зібрати файл: (назва, підсумок, зміст без вступу) або None,
+    якщо змісту немає."""
+    from app.export import parse_markdown, render_document
+    from app.export.outline import strip_preamble
+    from app.export.store import sources_from_evidence
+
+    content = strip_preamble(text)
+    outline = parse_markdown(content, fallback_title=fallback_title)
+    if not outline.has_content:
+        return None
+    rendered = render_document(outline, doc_request.format, sources_from_evidence(evidence))
+    return outline.title, rendered.stats, content
+
+
+def _save_document(
+    services: Services,
+    message_id: str,
+    doc_request: DocumentRequest,
+    title: str,
+    stats: dict[str, int],
+    *,
+    started: float,
+) -> dict[str, Any] | None:
+    from app.export.store import save_document
+
+    try:
+        with services.db.transaction() as con:
+            stored = save_document(con, message_id, doc_request.format, title, stats)
+    except Exception:
+        log.exception("Не вдалося записати файл відповіді %s", message_id)
+        return None
+    _Telemetry(services.db).event(
+        "document_generated", duration_ms=int((time.perf_counter() - started) * 1000),
+        meta={"format": doc_request.format, **stats},
+    )
+    return stored.payload()
+
+
+@router.get("/messages/{message_id}/file")
+def message_file(
+    request: Request,
+    message_id: str,
+    fmt: str | None = Query(default=None, alias="format"),
+) -> Response:
+    """Файл із відповіді асистента: pptx, docx або xlsx.
+
+    Без `format` — той, що просили в чаті («зроби презентацію …»). З `format`
+    — будь-яку відповідь можна забрати, скажімо, у Word, не просячи наперед.
+    Файл збирається щоразу з тексту повідомлення: байтів на диску немає.
+    """
+    from app.export.store import FormatRequired, MessageNotFound, render_message
+
+    if fmt is not None and fmt not in FORMATS:
+        raise HTTPException(status_code=400, detail=f"Невідомий формат файлу: {fmt}. "
+                                                    "Можливі: pptx, docx, xlsx.")
+    services = services_of(request)
+    try:
+        with services.db.connection() as con:
+            rendered = render_message(con, message_id, fmt)
+    except MessageNotFound:
+        raise HTTPException(status_code=404, detail="Відповідь не знайдено або вона порожня.") from None
+    except FormatRequired:
+        raise HTTPException(
+            status_code=400,
+            detail="До цієї відповіді файл не замовляли — вкажіть формат: pptx, docx або xlsx.",
+        ) from None
+    return Response(
+        content=rendered.data,
+        media_type=rendered.media_type,
+        headers={
+            "Content-Disposition": _attachment(rendered.filename),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _attachment(filename: str) -> str:
+    """RFC 6266: ASCII-запасна назва плюс справжня в `filename*` (кирилиця)."""
+    from urllib.parse import quote
+
+    extension = filename.rsplit(".", 1)[-1] if "." in filename else "bin"
+    return f"attachment; filename=\"document.{extension}\"; filename*=UTF-8''{quote(filename, safe='')}"
 
 
 async def _drain_progress(

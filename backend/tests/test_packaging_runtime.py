@@ -67,6 +67,19 @@ def test_multipart_оголошено_бо_api_приймає_форми() -> No
     )
 
 
+def test_бібліотеки_файлів_оголошено_і_перевіряє_збірка() -> None:
+    """python-docx, python-pptx, openpyxl в .venv розробника були й раніше —
+    транзитивно, через docling у групі `worker`. Та сама пастка, що з
+    python-multipart: легка збірка без воркера лишилася б без них. А оскільки
+    `app/export` імпортує їх ЛІНИВО, `import app.main` відсутності не помітить —
+    тож самоперевірка рантайму імпортує їх явно."""
+    declared = _declared(PYPROJECT["project"]["dependencies"])
+    assert {"python-docx", "python-pptx", "openpyxl"} <= declared
+    for module in ("docx", "pptx", "openpyxl"):
+        assert re.search(rf"\b{module}\b", runtime.SELF_CHECK_CODE), module
+    assert "/api/messages/{message_id}/file" in runtime.SMOKE_ENDPOINTS
+
+
 def test_self_check_імпортує_весь_застосунок() -> None:
     """Гейт, якого бракувало: відсутня залежність роутера мусить валити ЗБІРКУ.
 

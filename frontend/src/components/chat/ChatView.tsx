@@ -18,10 +18,15 @@
 import {
   ClipboardCheck,
   Copy,
+  Download,
   Eraser,
+  FileDown,
   FileSearch,
+  FileSpreadsheet,
+  FileText,
   History,
   MessageSquarePlus,
+  Presentation,
   RefreshCw,
   Search,
   Send,
@@ -30,10 +35,17 @@ import {
   ThumbsUp,
   TriangleAlert,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
-import type { ChatMessage, ChatSession, CitationDto } from "@/api/types";
+import { fetchMessageFile } from "@/api/endpoints";
+import type {
+  ChatMessage,
+  ChatSession,
+  CitationDto,
+  DocumentFormat,
+  MessageDocument,
+} from "@/api/types";
 import { AnswerText } from "@/components/chat/AnswerText";
 import { SessionList } from "@/components/chat/SessionList";
 import { WhyPanel } from "@/components/chat/WhyPanel";
@@ -43,8 +55,17 @@ import { Badge, Banner, EmptyState, Textarea } from "@/components/ui/Primitives"
 import { useFeedback, useMessages } from "@/hooks/queries";
 import { useChat, type LiveTurn } from "@/hooks/useChat";
 import { cn } from "@/lib/cn";
+import { saveResponseAsFile } from "@/lib/download";
 import { describeError } from "@/lib/errors";
-import { SOURCES, formatNumber, pluralize } from "@/lib/format";
+import {
+  QUESTIONS,
+  ROWS,
+  SECTIONS,
+  SLIDES,
+  SOURCES,
+  formatNumber,
+  pluralize,
+} from "@/lib/format";
 import { toPlainText } from "@/lib/markdown";
 import { useUi } from "@/lib/store";
 
@@ -302,6 +323,8 @@ function Answer({ message, onWhy }: { message: ChatMessage; onWhy: () => void })
       {message.abstained ? <AbstainBanner /> : null}
       <AnswerText text={message.content} citations={[]} onMarkerClick={onWhy} />
 
+      {message.document ? <DocumentCard messageId={message.id} document={message.document} /> : null}
+
       {/*
         Історія зберігає лише мапу «[n] → фрагмент» (`MessageOut.citations`),
         без назв документів і сторінок — вони живуть у `/messages/{id}/why`.
@@ -333,6 +356,16 @@ function Answer({ message, onWhy }: { message: ChatMessage; onWhy: () => void })
           <FileSearch size={13} />
           {t("chat.why")}
         </Button>
+        {/*
+          Будь-яку відповідь можна забрати у Word, не просячи файл наперед:
+          той самий збирач, що й для «створи документ …», із тексту в історії.
+        */}
+        {!message.document && !message.abstained ? (
+          <SaveFileButton messageId={message.id} format="docx" fallbackName="Відповідь асистента.docx">
+            <FileDown size={13} />
+            {t("chat.saveAsWord")}
+          </SaveFileButton>
+        ) : null}
 
         <span className="ml-auto flex items-center gap-1">
           {message.ttftMs ? (
@@ -393,6 +426,10 @@ function LiveTurnView({ turn, onWhy }: { turn: LiveTurn; onWhy: () => void }) {
           />
         ) : null}
 
+        {turn.document && turn.messageId ? (
+          <DocumentCard messageId={turn.messageId} document={turn.document} />
+        ) : null}
+
         {turn.merged.length ? <SourceStrip citations={turn.merged} /> : null}
 
         {turn.phase === "done" || turn.phase === "error" ? (
@@ -419,10 +456,13 @@ function LiveTurnView({ turn, onWhy }: { turn: LiveTurn; onWhy: () => void }) {
 function Phase({ turn }: { turn: LiveTurn }) {
   const { t } = useTranslation();
   const retrieving = turn.phase === "retrieving";
+  const generating = turn.documentFormat
+    ? t(`chat.composing.${turn.documentFormat}`)
+    : t("chat.generating");
   return (
     <div className="flex items-center gap-2.5 text-[0.8125rem] subtle">
       <Spinner className="text-accent" />
-      <span>{retrieving ? t("chat.retrieving") : t("chat.generating")}</span>
+      <span>{retrieving ? t("chat.retrieving") : generating}</span>
       {retrieving && turn.progress && turn.progress.total > 0 ? (
         // Реранкінг на CPU — десятки секунд. Лічильник показує, що пошук іде,
         // а не завис, і скільки ще лишилось.
@@ -439,6 +479,101 @@ function Phase({ turn }: { turn: LiveTurn }) {
         </Badge>
       ) : null}
     </div>
+  );
+}
+
+// ------------------------------------------------------------------ файли
+const FILE_ICONS: Record<DocumentFormat, typeof FileText> = {
+  pptx: Presentation,
+  docx: FileText,
+  xlsx: FileSpreadsheet,
+};
+
+/** «6 слайдів · 3 питання» / «4 розділи» / «10 рядків» — те, що викладач побачить у файлі. */
+function fileSummary(document: MessageDocument): string {
+  const { slides, sections, rows, questions } = document.stats;
+  if (document.format === "pptx" && slides) {
+    return questions
+      ? `${pluralize(slides, SLIDES)} · ${pluralize(questions, QUESTIONS)}`
+      : pluralize(slides, SLIDES);
+  }
+  if (rows && (document.format === "xlsx" || !sections)) return pluralize(rows, ROWS);
+  if (sections) return pluralize(sections, SECTIONS);
+  return "";
+}
+
+/**
+ * Картка файлу під відповіддю: що це, скільки всього, кнопка «Завантажити».
+ *
+ * Зміст файлу — це рівно текст відповіді над карткою, з тими самими
+ * посиланнями: викладач перевіряє його тут, а не після відкриття PowerPoint.
+ */
+function DocumentCard({ messageId, document }: { messageId: string; document: MessageDocument }) {
+  const { t } = useTranslation();
+  const Icon = FILE_ICONS[document.format];
+  const summary = fileSummary(document);
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-line bg-raised px-3 py-2.5">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-accent/12 text-accent">
+        <Icon size={18} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[0.8125rem] font-semibold" title={document.filename}>
+          {document.title || document.filename}
+        </p>
+        <p className="text-[0.6875rem] subtle">
+          {t(`chat.fileKind.${document.format}`)}
+          {summary ? ` · ${summary}` : ""}
+        </p>
+      </div>
+      <SaveFileButton messageId={messageId} fallbackName={document.filename} variant="primary">
+        <Download size={13} />
+        {t("chat.download")}
+      </SaveFileButton>
+    </div>
+  );
+}
+
+/**
+ * Кнопка, що качає файл відповіді. Без `format` — той, що просили в чаті.
+ * Помилку показує поруч: мовчазна кнопка, яка «нічого не робить», гірша.
+ */
+function SaveFileButton({
+  messageId,
+  format,
+  fallbackName,
+  variant = "ghost",
+  children,
+}: {
+  messageId: string;
+  format?: DocumentFormat;
+  fallbackName: string;
+  variant?: "primary" | "ghost";
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
+
+  const save = async () => {
+    setState("busy");
+    try {
+      await saveResponseAsFile(await fetchMessageFile(messageId, format), fallbackName);
+      setState("idle");
+    } catch {
+      setState("failed");
+    }
+  };
+
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <Button size="sm" variant={variant} loading={state === "busy"} onClick={() => void save()}>
+        {state === "busy" ? null : children}
+        {state === "busy" ? t("chat.download") : null}
+      </Button>
+      {state === "failed" ? (
+        <span className="text-[0.6875rem] text-danger">{t("chat.downloadFailed")}</span>
+      ) : null}
+    </span>
   );
 }
 

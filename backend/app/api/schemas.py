@@ -180,6 +180,9 @@ class MessageOut(ApiModel):
     tokens_out: int | None
     created_at: str
     citations: list[dict[str, Any]] = Field(default_factory=list)
+    # Файл, сформований із цієї відповіді на прохання викладача: {format, title,
+    # filename, stats}. None — звичайна відповідь (її теж можна забрати у Word).
+    document: dict[str, Any] | None = None
 
 
 class ChatIn(ApiModel):

@@ -348,6 +348,7 @@ SMOKE_ENDPOINTS = (
     "/api/collections/{collection_id}/documents",
     "/api/sessions",
     "/api/chat",
+    "/api/messages/{message_id}/file",
 )
 
 # Код самоперевірки — окремою константою, щоб тест пакування звіряв саме те,
@@ -363,7 +364,9 @@ SMOKE_ENDPOINTS = (
 # без цього рядка рантайм зі зламаним колесом uvicorn проходив би збірку і
 # помирав аж у димовому тесті.
 SELF_CHECK_CODE = (
-    "import sys, uvicorn, app.main; from app import config; "
+    # docx/pptx/openpyxl — явно: app/export імпортує їх ліниво, тож без цього
+    # відсутня бібліотека вилізла б лише на першому «зроби презентацію».
+    "import sys, uvicorn, app.main, docx, pptx, openpyxl; from app import config; "
     f"expected = {SMOKE_ENDPOINTS!r}; "
     "paths = app.main.app.openapi()['paths']; "
     "missing = [p for p in expected if p not in paths]; "

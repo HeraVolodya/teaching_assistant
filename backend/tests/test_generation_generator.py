@@ -298,3 +298,42 @@ async def test_reasoning_is_not_requested_by_default() -> None:
     backend = ParamsSpy()
     await collect(Generator(backend).answer("Питання?", evidence_two_documents()))
     assert backend.params[0].reasoning is None
+
+
+# ------------------------------------------------- інше завдання (файл, таблиця)
+async def test_task_replaces_rules_label_and_output_budget() -> None:
+    """План презентації — та сама генерація з іншими ПРАВИЛАМИ: системний
+    префікс не змінюється (KV-кеш), сендвіч теж; змінюються правила, останній
+    рядок і бюджет виводу."""
+    from app.generation.prompt_builder import SYSTEM_RULES_UK, AnswerTask
+
+    backend = ParamsSpy()
+    task = AnswerTask(rules="ПРАВИЛА: ФОРМАТ — ПРЕЗЕНТАЦІЯ, тези з [n].", max_tokens=1777)
+    out = await collect(Generator(backend, reasoning="off").answer(
+        "Зроби презентацію про деривацію", evidence_two_documents(), task=task))
+    assert text_of(out)
+    system, user = backend.calls[0][0]["content"], backend.calls[0][1]["content"]
+    assert system.startswith(SYSTEM_RULES_UK)
+    assert "ФОРМАТ — ПРЕЗЕНТАЦІЯ" in user and user.endswith("Результат:")
+    assert "спирайся лише на ДЖЕРЕЛА вище; після кожного твердження став [n]; поєднуй" not in user
+    assert backend.params[0].max_tokens == 1777
+    assert backend.params[0].reasoning == "off"
+
+
+async def test_task_never_goes_through_map_reduce() -> None:
+    """REDUCE звів би слайди чи таблицю до суцільного тексту: для завдань —
+    лише прямий прохід, навіть коли звичайна відповідь пішла б у map-reduce."""
+    from app.generation.prompt_builder import AnswerTask
+
+    evidence = [
+        make_retrieved(document_id=f"doc-{i}", ordinal=i, text="слово " * 3000,
+                       rerank_score=0.9 - i * 0.01)
+        for i in range(4)
+    ]
+    backend = StubBackend()
+    out = await collect(Generator(backend, context_tokens=4096).answer(
+        "Склади таблицю", evidence, task=AnswerTask(rules="ПРАВИЛА: таблиця.", max_tokens=900),
+        force_map_reduce=True))
+    stages = [c.payload.get("stage") for c in out if c.kind == "debug"]
+    assert "map" not in stages and "reduce" not in stages
+    assert len(backend.calls) == 1

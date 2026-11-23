@@ -25,9 +25,12 @@ import type {
   ChatDebugEvent,
   ChatDoneEvent,
   ChatErrorEvent,
+  ChatFileEvent,
   ChatProgressEvent,
   ChatTokenEvent,
   CitationDto,
+  DocumentFormat,
+  MessageDocument,
 } from "@/api/types";
 import type { ChatPhase } from "@/lib/stages";
 
@@ -48,6 +51,10 @@ export interface LiveTurn {
   documents: number | null;
   /** «Оцінено N з M» під час реранкінгу — найдовшого етапу пошуку. */
   progress: { done: number; total: number } | null;
+  /** Який файл просили зібрати — для «Готую презентацію…» ще до першого слова. */
+  documentFormat: DocumentFormat | null;
+  /** Готовий файл (кадр `chat.file`) — картка з кнопкою «Завантажити». */
+  document: MessageDocument | null;
 }
 
 const EMPTY_TURN: LiveTurn = {
@@ -65,6 +72,8 @@ const EMPTY_TURN: LiveTurn = {
   found: null,
   documents: null,
   progress: null,
+  documentFormat: null,
+  document: null,
 };
 
 export interface UseChatResult {
@@ -138,6 +147,20 @@ export function useChat(sessionId: string | undefined): UseChatResult {
                         found: typeof data.found === "number" ? data.found : current.found,
                         documents:
                           typeof data.documents === "number" ? data.documents : current.documents,
+                        documentFormat: data.document ?? current.documentFormat,
+                      }
+                    : current,
+                );
+                break;
+              }
+              case "chat.file": {
+                const data = frame.payload as ChatFileEvent;
+                setLive((current) =>
+                  current
+                    ? {
+                        ...current,
+                        messageId: data.messageId ?? current.messageId,
+                        document: data.document,
                       }
                     : current,
                 );

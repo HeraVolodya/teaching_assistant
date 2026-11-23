@@ -41,6 +41,7 @@ __all__ = [
     "CHAT_DEBUG",
     "CHAT_DONE",
     "CHAT_ERROR",
+    "CHAT_FILE",
     "CHAT_PROGRESS",
     "CHAT_TOKEN",
     "DOC_READY",
@@ -73,10 +74,13 @@ WORKER_STATUS = "worker.status"      # {mode, running, active}
 # відповіді /api/chat, НЕ в спільній шині: це ефемерний стан, і десяток кадрів
 # на кожне питання витісняв би з кільцевого буфера події, що мають значення.
 CHAT_PROGRESS = "chat.progress"
+# Відповідь стала файлом («зроби презентацію …»): {messageId, document:{format,
+# title, filename, stats}}. Байти — окремим GET /api/messages/{id}/file.
+CHAT_FILE = "chat.file"
 
 EVENT_TYPES: tuple[str, ...] = (
     JOB_PROGRESS, JOB_FAILED, DOC_READY,
-    CHAT_TOKEN, CHAT_CITATIONS, CHAT_DEBUG, CHAT_DONE, CHAT_ERROR,
+    CHAT_TOKEN, CHAT_CITATIONS, CHAT_DEBUG, CHAT_DONE, CHAT_ERROR, CHAT_FILE,
     MODEL_DOWNLOAD, WORKER_STATUS,
 )
 

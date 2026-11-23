@@ -170,7 +170,7 @@ export const en: Dictionary = {
   },
   chat: {
     title: "Questions",
-    placeholder: "Ask about the assistant's materials…",
+    placeholder: "Ask about the materials or request a presentation, document or table…",
     send: "Ask",
     stop: "Stop",
     newChat: "New question",
@@ -186,9 +186,24 @@ export const en: Dictionary = {
     deleteSessionWarning:
       "The questions and answers in this conversation will disappear. This cannot be undone.",
     empty: "Ask your first question",
-    emptyHint: "The assistant answers only from the loaded materials and cites pages.",
+    emptyHint:
+      "The assistant answers only from the loaded materials and cites pages. " +
+      "It can also build a file: “Make a 5-slide presentation on …”, “Make a table of …”, “Create notes on …”.",
     retrieving: "Searching the materials…",
     generating: "Composing the answer…",
+    composing: {
+      pptx: "Preparing the presentation…",
+      docx: "Preparing the document…",
+      xlsx: "Preparing the table…",
+    },
+    fileKind: {
+      pptx: "PowerPoint presentation",
+      docx: "Word document",
+      xlsx: "Excel table",
+    },
+    download: "Download",
+    downloadFailed: "Could not download the file. Please try again.",
+    saveAsWord: "Save as Word",
     abstainTitle: "The materials give no grounds for an answer",
     abstainBody:
       "The assistant found no sufficiently convincing fragments in your materials and deliberately did not invent one.",

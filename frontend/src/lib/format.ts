@@ -35,6 +35,10 @@ export const TABLES: PluralForms = ["таблицю", "таблиці", "таб�
 export const FORMULAS: PluralForms = ["формулу", "формули", "формул"];
 export const SOURCES: PluralForms = ["джерело", "джерела", "джерел"];
 export const MINUTES: PluralForms = ["хвилина", "хвилини", "хвилин"];
+export const SLIDES: PluralForms = ["слайд", "слайди", "слайдів"];
+export const SECTIONS: PluralForms = ["розділ", "розділи", "розділів"];
+export const ROWS: PluralForms = ["рядок", "рядки", "рядків"];
+export const QUESTIONS: PluralForms = ["питання", "питання", "питань"];
 
 /** Нерозривний пробіл між розрядами: «3 412», а не «3,412». */
 export function formatNumber(n: number): string {
