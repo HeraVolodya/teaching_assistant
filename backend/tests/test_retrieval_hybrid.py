@@ -22,6 +22,7 @@ from app.retrieval.hybrid import (
     analyze_query,
     build_match_expression,
     char_ngram_scores,
+    expand_abbreviations,
     fts_term,
 )
 from app.retrieval.vector_index import build_collection_index
@@ -493,3 +494,114 @@ def test_retrieval_never_pulls_torch_into_the_api_process() -> None:
         [_sys.executable, "-c", code], capture_output=True, text=True, check=True
     )
     assert out.stdout.strip() == "False"
+
+
+# ============================================================ прогрес реранкінгу
+def test_rerank_progress_is_reported_and_does_not_change_the_result(
+    retriever, corpus: Corpus
+) -> None:
+    """Реранкінг 50 кандидатів на CPU — десятки секунд; UI показує «N з M».
+
+    Звіт про прогрес скорить групами, тож він не має права змінити ані
+    скори, ані підсумковий вибір фрагментів.
+    """
+    seen: list[tuple[str, int, int]] = []
+    query = "поправка на деривацію снаряда"
+    with_progress, debug = retriever.retrieve(
+        query, _cfg(), corpus.collection_id,
+        on_progress=lambda stage, done, total: seen.append((stage, done, total)),
+    )
+    without, _ = retriever.retrieve(query, _cfg(), corpus.collection_id)
+
+    assert seen, "реранкінг пройшов мовчки"
+    assert {stage for stage, _, _ in seen} == {"rerank"}
+    done = [d for _, d, _ in seen]
+    total = seen[0][2]
+    assert done[0] == 0 and done[-1] == total == debug.reranked_count
+    assert done == sorted(done)
+    assert [(r.chunk.chunk_uid, r.rerank_score) for r in with_progress] == \
+        [(r.chunk.chunk_uid, r.rerank_score) for r in without]
+
+
+def test_no_progress_without_a_reranker(corpus: Corpus) -> None:
+    r = HybridRetriever(corpus.db, provider=corpus.provider, index_dir=corpus.index_dir)
+    seen: list = []
+    try:
+        r.retrieve("снаряд", _cfg(), corpus.collection_id,
+                   on_progress=lambda *a: seen.append(a))
+    finally:
+        r.close()
+    assert seen == []
+
+
+class _PlainReranker:
+    """Реранкер строго за протоколом: `score(query, texts)` без прогресу."""
+
+    def __init__(self) -> None:
+        self.calls: list[int] = []
+
+    def score(self, query: str, texts: list[str]) -> list[float]:
+        self.calls.append(len(texts))
+        return [1.0 / (i + 1) for i in range(len(texts))]
+
+
+def test_progress_never_splits_the_candidates_into_extra_calls(corpus: Corpus) -> None:
+    """Int8-реранкер дає інший скор тій самій парі в іншому батчі: якби прогрес
+    дробив кандидатів на групи, він тихо змінив би джерела відповіді."""
+    plain = _PlainReranker()
+    r = HybridRetriever(corpus.db, provider=corpus.provider, index_dir=corpus.index_dir,
+                        reranker=plain)
+    seen: list[tuple[str, int, int]] = []
+    try:
+        r.retrieve("поправка на деривацію", _cfg(), corpus.collection_id,
+                   on_progress=lambda *a: seen.append(a))
+    finally:
+        r.close()
+    assert len(plain.calls) == 1                     # усі кандидати — одним викликом
+    total = plain.calls[0]
+    assert seen == [("rerank", 0, total), ("rerank", total, total)]
+
+
+# ============================================================ скорочення в запиті
+def test_abbreviations_are_expanded_as_whole_words() -> None:
+    """Живий запит «що таке арт підрозділ?»: «арт» не лематизується, BM25 шукав
+    лише «підрозділ», і визначення з глосарію до реранкера не дійшли."""
+    assert expand_abbreviations("що таке арт підрозділ ?") == "що таке артилерійський підрозділ ?"
+    assert expand_abbreviations("Де розгортають КСП?") == "Де розгортають командно-спостережний пункт?"
+    # Лише цілі слова: «арти», «артилерія», коди й позначення не чіпаємо.
+    for untouched in ("арти", "артилерія", "Д-30", "2С3 «Акація»", "вп-1"):
+        assert expand_abbreviations(untouched) == untouched
+
+
+def test_expanded_terms_reach_lexical_search() -> None:
+    terms = analyze_query("що таке арт підрозділ?")
+    assert terms.raw == "що таке арт підрозділ?"
+    assert terms.expanded == "що таке артилерійський підрозділ?"
+    assert any(t.startswith("артилер") for t in terms.match_terms)
+
+
+def test_query_without_abbreviations_is_unchanged() -> None:
+    terms = analyze_query("Яка дальність стрільби Д-30?")
+    assert terms.expanded == terms.raw
+
+
+class _QuerySpy(_PlainReranker):
+    def __init__(self) -> None:
+        super().__init__()
+        self.queries: list[str] = []
+
+    def score(self, query: str, texts: list[str]) -> list[float]:
+        self.queries.append(query)
+        return super().score(query, texts)
+
+
+def test_reranker_sees_the_expanded_query_and_debug_names_it(corpus: Corpus) -> None:
+    spy = _QuerySpy()
+    r = HybridRetriever(corpus.db, provider=corpus.provider, index_dir=corpus.index_dir,
+                        reranker=spy)
+    try:
+        _, debug = r.retrieve("арт поправка на деривацію", _cfg(), corpus.collection_id)
+    finally:
+        r.close()
+    assert spy.queries == ["артилерійський поправка на деривацію"]
+    assert debug.candidates[0]["reranker"] == "_QuerySpy"

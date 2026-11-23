@@ -301,6 +301,18 @@ export interface ChatDebugEvent {
   [key: string]: unknown;
 }
 
+/**
+ * Прогрес пошуку всередині ходу (лише в тілі відповіді `/api/chat`, не в спільному
+ * каналі). Реранкінг 50 фрагментів на CPU триває десятки секунд — без цього
+ * кадру екран мовчить і читається як зависання.
+ */
+export interface ChatProgressEvent {
+  messageId: string;
+  stage: string;
+  done: number;
+  total: number;
+}
+
 export interface ChatDoneEvent {
   messageId: string;
   abstained: boolean;

@@ -231,6 +231,7 @@ class _FakeSession:
     def __init__(self, scoring: rr.RerankScoring) -> None:
         self.scoring = scoring
         self.seen: list[dict] = []
+        self.fetched: list = []
 
     def get_inputs(self) -> list[_Spec]:
         return [_Spec("input_ids"), _Spec("attention_mask")]
@@ -245,6 +246,7 @@ class _FakeSession:
         import numpy as np
 
         self.seen.append({k: v.copy() for k, v in feeds.items()})
+        self.fetched.append(_outputs)
         ids, mask = feeds["input_ids"], feeds["attention_mask"]
         if self.scoring is rr.RerankScoring.SEQUENCE_CLASSIFICATION:
             last = np.clip(mask.sum(axis=1) - 1, 0, ids.shape[1] - 1)
@@ -255,7 +257,8 @@ class _FakeSession:
         return [logits]
 
 
-def _onnx_reranker(*, model_name: str = "default", max_pair_tokens: int = 512):
+def _onnx_reranker(*, model_name: str = "default", max_pair_tokens: int = 512,
+                   batch_rows: int | None = None):
     from pathlib import Path as _Path
 
     model = rr.get(model_name)
@@ -267,11 +270,13 @@ def _onnx_reranker(*, model_name: str = "default", max_pair_tokens: int = 512):
         session=session,
         max_pair_tokens=max_pair_tokens,
         token_budget=4096,
+        batch_rows=batch_rows,
     ), session
 
 
 def test_yes_no_scoring_reads_the_last_real_token() -> None:
-    provider, session = _onnx_reranker()
+    # Батч увімкнено явно: перевіряється саме читання позиції за паддінгом.
+    provider, session = _onnx_reranker(batch_rows=8)
     scores = provider.score(QUERY, [RELEVANT, "коротко"])
     assert len(scores) == 2
     assert all(0.0 <= s <= 1.0 for s in scores)
@@ -282,14 +287,14 @@ def test_yes_no_scoring_reads_the_last_real_token() -> None:
 
 
 def test_padding_positions_are_masked_out() -> None:
-    provider, session = _onnx_reranker()
+    provider, session = _onnx_reranker(batch_rows=8)
     provider.score(QUERY, [RELEVANT, "а"])
     for feed in session.seen:
         assert ((feed["input_ids"] == PAD_ID) == (feed["attention_mask"] == 0)).all()
 
 
 def test_scores_come_back_in_input_order() -> None:
-    provider, _ = _onnx_reranker()
+    provider, _ = _onnx_reranker(batch_rows=8)
     docs = [RELEVANT, "а", PARTIAL, "бб"]
     batched = provider.score(QUERY, docs)
     for i, doc in enumerate(docs):
@@ -307,3 +312,53 @@ def test_onnx_reranker_reports_the_model_key_for_calibration() -> None:
     provider, _ = _onnx_reranker()
     assert provider.model_key == rr.model_key(rr.get())
     assert not provider.model_key.startswith("stub:")
+
+
+# --------------------------------------------- режим батчів і прогрес
+# Склад батча впливає на скор: динамічна int8-квантизація рахує шкалу на весь
+# батч разом із паддінгом. Тому типовий режим — той, на якому застосунок уже
+# працює (батчі), а прогрес звітується зсередини, не дробленням кандидатів.
+def test_pairs_are_batched_by_default() -> None:
+    provider, session = _onnx_reranker()
+    provider.score(QUERY, [RELEVANT, "а", PARTIAL])
+    assert [feed["input_ids"].shape[0] for feed in session.seen] == [3]
+
+
+def test_single_pair_mode_from_the_environment(monkeypatch) -> None:
+    """ПК із 16 ГБ: пари поодинці — ~6 ГБ піку замість ~19 ГБ (свідомий вибір:
+    набір джерел зміниться)."""
+    monkeypatch.setenv(rr.BATCH_ROWS_ENV, "1")
+    provider, session = _onnx_reranker()
+    provider.score(QUERY, [RELEVANT, "а", PARTIAL])
+    assert [feed["input_ids"].shape[0] for feed in session.seen] == [1, 1, 1]
+    assert all(feed["attention_mask"].all() for feed in session.seen)
+
+
+def test_only_logits_are_fetched_from_the_session() -> None:
+    """Декодерний експорт віддає ще 56 тензорів `present.*` (KV-кеш), які
+    скорингу не потрібні: `run(None, …)` матеріалізував би їх щоразу."""
+    provider, session = _onnx_reranker()
+    provider.score(QUERY, [RELEVANT, PARTIAL])
+    assert session.fetched and all(f == ["logits"] for f in session.fetched)
+
+
+@pytest.mark.parametrize("batch_rows", [None, 1])
+def test_progress_is_reported_per_batch_and_never_changes_scores(batch_rows) -> None:
+    docs = [RELEVANT, "а", PARTIAL, "бб", UNRELATED]
+    plain, _ = _onnx_reranker(batch_rows=batch_rows)
+    reported, session = _onnx_reranker(batch_rows=batch_rows)
+    seen: list[tuple[int, int]] = []
+
+    scores = reported.score(QUERY, docs, on_progress=lambda d, t: seen.append((d, t)))
+
+    assert scores == plain.score(QUERY, docs)
+    assert len(seen) == len(session.seen)            # одне повідомлення на батч
+    assert [d for d, _ in seen] == sorted(d for d, _ in seen)
+    assert seen[-1] == (len(docs), len(docs))
+
+
+def test_stub_reports_completion() -> None:
+    seen: list[tuple[int, int]] = []
+    out = rr.create_reranker(stub=True).score(
+        QUERY, [RELEVANT, UNRELATED], on_progress=lambda d, t: seen.append((d, t)))
+    assert len(out) == 2 and seen == [(2, 2)]

@@ -356,7 +356,9 @@ class LlmJudge:
         cited = tuple(int(m) for m in _MARKER_RE.findall(claim))
         # temperature 0.0: суддя не має бути креативним; 8 токенів — це «ЧАСТКОВО»
         # з запасом, і водночас жорсткий бар'єр проти есе.
-        params = ChatParams(temperature=0.0, max_tokens=8)
+        # reasoning="off": reasoning-модель (Gemma 4) інакше спалює всі 8 токенів
+        # на ланцюжок міркувань і повертає порожній вердикт.
+        params = ChatParams(temperature=0.0, max_tokens=8, reasoning="off")
         text = ""
         try:
             async for token in self.backend.chat_stream(
@@ -668,7 +670,7 @@ async def _ask_pairwise(backend: Any, question: str, first: str, second: str, mo
             {"role": "system", "content": PAIRWISE_SYSTEM_UK},
             {"role": "user", "content": body},
         ],
-        params=ChatParams(temperature=0.0, max_tokens=6),
+        params=ChatParams(temperature=0.0, max_tokens=6, reasoning="off"),
         model=model,
     ):
         text += token

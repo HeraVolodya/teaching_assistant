@@ -61,6 +61,7 @@ from app.backends.base import (
     TTFT_WARM_S,
     BackendHealth,
     ChatParams,
+    LlmError,
     LlmProtocolError,
     LlmTimeout,
     LlmUnavailable,
@@ -175,6 +176,15 @@ def _parse_model(raw: dict[str, Any]) -> ModelInfo:
     else:
         quant_name = str(quant) if quant else None
 
+    # `capabilities.reasoning.allowed_options` — лише v1 (LM Studio ≥ 0.4.8). Саме
+    # за ним вирішується, чи можна попросити модель не міркувати: моделі без цієї
+    # можливості LM Studio відповідає помилкою «does not support reasoning
+    # configuration», тож слати параметр навмання не можна.
+    caps = raw.get("capabilities")
+    reasoning = caps.get("reasoning") if isinstance(caps, dict) else None
+    options = reasoning.get("allowed_options") if isinstance(reasoning, dict) else None
+    reasoning_options = tuple(str(o) for o in options) if isinstance(options, list) else ()
+
     return ModelInfo(
         key=key,
         display_name=str(raw.get("display_name") or raw.get("name") or key),
@@ -187,6 +197,7 @@ def _parse_model(raw: dict[str, Any]) -> ModelInfo:
         loaded_context=int(loaded_ctx) if isinstance(loaded_ctx, (int, float)) else None,
         quantization=quant_name,
         size_bytes=(int(raw["size_bytes"]) if isinstance(raw.get("size_bytes"), int) else None),
+        reasoning_options=reasoning_options,
         raw=raw,
     )
 
@@ -231,6 +242,12 @@ class LmStudioClient:
         # Баг #1203: стрім може не зупинитись одразу після закриття. Пізні
         # токени мертвих запитів мовчки відкидаються.
         self._dead_requests: set[str] = set()
+        # Останній список моделей (оновлює кожен `health()` — UI опитує його
+        # постійно): звідси клієнт знає можливості моделі, не роблячи зайвого запиту.
+        self._models: dict[str, ModelInfo] = {}
+        # Моделі, що відхилили `reasoning_effort` попри оголошену можливість:
+        # більше його їм не шлемо, щоб не платити зайвим запитом на кожне питання.
+        self._no_reasoning_cfg: set[str] = set()
 
     # ------------------------------------------------------------ службове
     def _http(self) -> httpx.AsyncClient:
@@ -300,6 +317,7 @@ class LmStudioClient:
             except ValueError:
                 continue
             self.api_version = version
+            self._models = {m.key: m for m in models if m.key}
             return BackendHealth(
                 ok=True, base_url=self.base_url, api_version=version,  # type: ignore[arg-type]
                 models=tuple(models),
@@ -546,6 +564,91 @@ class LmStudioClient:
 
         raise NoChatModelReady(tuple(m.key for m in chat))
 
+    # ------------------------------------------------------ можливості моделі
+    def _model_info(self, key: str) -> ModelInfo | None:
+        """Модель з останнього списку: спершу точний ключ, далі нормалізований
+        (ключ LM Studio і ідентифікатор репозиторію — той самий файл)."""
+        info = self._models.get(key)
+        if info is not None:
+            return info
+        return BackendHealth(ok=True, models=tuple(self._models.values())).find(key)
+
+    async def _reasoning_off_supported(self, model_key: str) -> bool:
+        """Чи можна попросити цю модель не міркувати.
+
+        Лише за оголошеною можливістю (`capabilities.reasoning.allowed_options`):
+        моделі без неї LM Studio на параметр відповідає помилкою. Якщо модель ще
+        не бачили (явно задана в налаштуваннях, `health()` ще не викликався) —
+        один запит списку моделей, далі працює кеш.
+        """
+        if model_key in self._no_reasoning_cfg:
+            return False
+        info = self._model_info(model_key)
+        if info is None:
+            try:
+                await self.list_models()
+            except LlmError:
+                return False
+            info = self._model_info(model_key)
+        return info is not None and "off" in info.reasoning_options
+
+    async def ensure_loaded(self, model: str | None = None) -> str | None:
+        """Підняти модель у пам'ять ДО питання. Повертає її ключ або None.
+
+        JIT-завантаження LM Studio (15–22 с для Gemma 4 E4B на цій лінійці
+        ноутбуків) інакше лягає на перше питання після старту застосунку або
+        після того, як LM Studio вивантажив модель за власним TTL простою.
+        Викликається паралельно з пошуком і при відкритті чату, тож час
+        завантаження ховається за роботою, яку все одно треба зробити.
+
+        Механізм — той самий JIT, що й у першого питання (крихітний запит на
+        один токен), а не `/api/v1/models/load` з власною конфігурацією: конфіг
+        LM Studio належить викладачеві, і ми його не перевизначаємо. Ніколи не
+        кидає: невдалий розігрів не має ламати відповідь, яка його не потребує.
+        """
+        try:
+            models = await self.list_models()
+        except LlmError:
+            return None
+        key = model or (self._last_load_config.model if self._last_load_config else None)
+        if key:
+            info = self._model_info(key)
+        else:
+            chat = [m for m in models if m.kind in ("llm", "vlm", "unknown") and m.key]
+            loaded = [m for m in chat if m.loaded]
+            # Кілька моделей і жодна не піднята — вибір за викладачем, не за нами.
+            info = loaded[0] if loaded else (chat[0] if len(chat) == 1 else None)
+        if info is None:
+            return None
+        if info.loaded:
+            return info.key
+
+        payload: dict[str, Any] = {
+            "model": info.key,
+            "messages": [{"role": "user", "content": "."}],
+            "max_tokens": 1,
+            "stream": False,
+        }
+        if "off" in info.reasoning_options and info.key not in self._no_reasoning_cfg:
+            payload["reasoning_effort"] = "none"
+        log.info("Піднімаю модель %s заздалегідь (JIT), щоб не чекати на першому питанні.",
+                 info.key)
+        try:
+            resp = await self._http().post(
+                "/v1/chat/completions", json=payload,
+                timeout=httpx.Timeout(connect=self.connect_timeout_s,
+                                      read=self.load_timeout_s,
+                                      write=30.0, pool=self.connect_timeout_s),
+            )
+        except httpx.HTTPError as exc:
+            log.info("Попереднє завантаження %s не вдалося: %s", info.key, exc)
+            return None
+        if resp.status_code >= 400:
+            log.info("Попереднє завантаження %s не вдалося: HTTP %s %s",
+                     info.key, resp.status_code, resp.text[:200])
+            return None
+        return info.key
+
     async def _chat_stream_once(
         self,
         messages: Messages,
@@ -564,55 +667,78 @@ class LmStudioClient:
             # справжня причина була в тому, що ми не назвали модель.
             # Дві помилки з однаковим текстом — найдорожчий вид діагностики.
             model_key = await self._resolve_chat_model()
-        payload: dict[str, Any] = {
-            "model": model_key,
-            "messages": messages,
-            "stream": True,
-            **p.to_payload(),
-        }
-        # НІКОЛИ truncateMiddle: воно тихо викидає ваші докази з середини
-        # промпту, і ви отримуєте впевнену відповідь без джерел.
-        payload["context_overflow_policy"] = p.context_overflow_policy
+
+        # МІРКУВАННЯ ВИМИКАЮТЬСЯ САМЕ `reasoning_effort: "none"`. LM Studio 0.4.x
+        # мовчки ігнорує на цій поверхні і `reasoning: "off"`, і `reasoning.effort`,
+        # і `chat_template_kwargs.enable_thinking` — перевірено на живому сервері,
+        # саме тому раніше вважалося, що вимкнути їх «неможливо». Замір на Gemma 4
+        # E4B з тим самим промптом: перший видимий токен 23.3 с → 0.84 с.
+        send_reasoning = p.reasoning == "off" and await self._reasoning_off_supported(model_key)
 
         first_timeout = self.ttft_warm_s if warm else self.ttft_cold_s
         request_id = f"{id(messages):x}-{len(messages)}"
 
-        try:
-            async with self._http().stream(
-                "POST", "/v1/chat/completions", json=payload,
-                timeout=httpx.Timeout(
-                    connect=self.connect_timeout_s,
-                    read=max(first_timeout, self.idle_timeout_s) + 5.0,
-                    write=30.0, pool=self.connect_timeout_s),
-            ) as resp:
-                if resp.status_code >= 400:
-                    body = (await resp.aread()).decode("utf-8", "replace")
-                    lowered = body.lower()
-                    if any(m in lowered for m in _UNLOADED_MARKERS):
-                        raise ModelNotLoaded(model_key or "?")
-                    if any(m in lowered for m in _GUARDRAIL_MARKERS):
-                        raise ModelLoadRefused(model_key or "?", 0, body[:400])
-                    raise LlmProtocolError(
-                        f"LM Studio повернув HTTP {resp.status_code}: {body[:300]}")
+        for attempt in (1, 2):
+            payload: dict[str, Any] = {
+                "model": model_key,
+                "messages": messages,
+                "stream": True,
+                **p.to_payload(),
+            }
+            # НІКОЛИ truncateMiddle: воно тихо викидає ваші докази з середини
+            # промпту, і ви отримуєте впевнену відповідь без джерел.
+            payload["context_overflow_policy"] = p.context_overflow_policy
+            if send_reasoning:
+                payload["reasoning_effort"] = "none"
 
-                stream = stream_with_idle_timeout(
-                    resp.aiter_lines(),
-                    first_timeout=first_timeout,
-                    idle_timeout=self.idle_timeout_s,
-                )
-                async for line in stream:
-                    if cancel is not None and cancel.is_set():
-                        # Баг #1203: сервер може ще якийсь час слати токени.
-                        # Позначаємо запит мертвим і виходимо — вихід із
-                        # `async with` закриває HTTP-стрім.
-                        self._dead_requests.add(request_id)
-                        return
-                    for delta in _iter_sse_deltas(line):
-                        yield delta
-        except httpx.ReadTimeout as exc:
-            raise LlmTimeout(self.idle_timeout_s, stage="очікування токена") from exc
-        except httpx.HTTPError as exc:
-            raise LlmUnavailable(str(exc)) from exc
+            try:
+                async with self._http().stream(
+                    "POST", "/v1/chat/completions", json=payload,
+                    timeout=httpx.Timeout(
+                        connect=self.connect_timeout_s,
+                        read=max(first_timeout, self.idle_timeout_s) + 5.0,
+                        write=30.0, pool=self.connect_timeout_s),
+                ) as resp:
+                    if resp.status_code >= 400:
+                        body = (await resp.aread()).decode("utf-8", "replace")
+                        lowered = body.lower()
+                        if send_reasoning and attempt == 1 and "reasoning" in lowered:
+                            # Модель оголосила можливість, але сервер параметр
+                            # відхилив. Відповідь без нього все одно краща за
+                            # помилку: повторюємо рівно один раз і запам'ятовуємо.
+                            # Токенів ще не було, тож склеїти дві відповіді неможливо.
+                            log.warning(
+                                "LM Studio відхилив reasoning_effort для %s (%s); "
+                                "повторюю без нього.", model_key, body[:200])
+                            self._no_reasoning_cfg.add(model_key)
+                            send_reasoning = False
+                            continue
+                        if any(m in lowered for m in _UNLOADED_MARKERS):
+                            raise ModelNotLoaded(model_key or "?")
+                        if any(m in lowered for m in _GUARDRAIL_MARKERS):
+                            raise ModelLoadRefused(model_key or "?", 0, body[:400])
+                        raise LlmProtocolError(
+                            f"LM Studio повернув HTTP {resp.status_code}: {body[:300]}")
+
+                    stream = stream_with_idle_timeout(
+                        resp.aiter_lines(),
+                        first_timeout=first_timeout,
+                        idle_timeout=self.idle_timeout_s,
+                    )
+                    async for line in stream:
+                        if cancel is not None and cancel.is_set():
+                            # Баг #1203: сервер може ще якийсь час слати токени.
+                            # Позначаємо запит мертвим і виходимо — вихід із
+                            # `async with` закриває HTTP-стрім.
+                            self._dead_requests.add(request_id)
+                            return
+                        for delta in _iter_sse_deltas(line):
+                            yield delta
+                    return
+            except httpx.ReadTimeout as exc:
+                raise LlmTimeout(self.idle_timeout_s, stage="очікування токена") from exc
+            except httpx.HTTPError as exc:
+                raise LlmUnavailable(str(exc)) from exc
 
 
 def _iter_sse_deltas(line: str) -> list[str]:

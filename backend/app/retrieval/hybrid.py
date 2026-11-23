@@ -44,12 +44,13 @@ UNLP 2026 повідомляє, що RRF не дав приросту над ч�
 
 from __future__ import annotations
 
+import inspect
 import math
 import re
 import sqlite3
 import time
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -99,6 +100,25 @@ NGRAM_LENGTH_B = 0.75
 # Ваги колонок FTS5: леми 1.0, словоформи 0.4, коди 2.5 (план, §3).
 BM25_WEIGHTS = (1.0, 0.4, 2.5)
 
+# Скорочення, які викладачі пишуть у питаннях, → повна форма з підручників.
+# Ключ — casefold цілого слова. Лише однозначні: «арт» у цьому корпусі завжди
+# артилерія, «ВП» — вогнева позиція.
+ABBREVIATIONS_UK: dict[str, str] = {
+    "арт": "артилерійський",
+    "арта": "артилерія",
+    "соб": "старший офіцер батареї",
+    "вп": "вогнева позиція",
+    "ксп": "командно-спостережний пункт",
+    "бк": "боєкомплект",
+    "рсзв": "реактивна система залпового вогню",
+    "птрк": "протитанковий ракетний комплекс",
+}
+_ABBREVIATION_RE = re.compile(
+    r"(?<![\w-])(?:" + "|".join(sorted(map(re.escape, ABBREVIATIONS_UK), key=len, reverse=True))
+    + r")(?![\w-])",
+    re.IGNORECASE,
+)
+
 _TOKEN_RE = re.compile(r"(?u)[^\W_]+(?:[''’ʼ-][^\W_]+)*")
 _CODE_RE = re.compile(r"(?u)(?<![\w-])(?=[\w-]*[^\W\d_])(?=[\w-]*\d)[\w-]{2,}(?![\w-])")
 _APOSTROPHES = {"’": "'", "ʼ": "'", "´": "'", "′": "'", "`": "'"}
@@ -138,6 +158,9 @@ class QueryTerms:
     lemmas: list[str] = field(default_factory=list)
     codes: list[str] = field(default_factory=list)
     anchored: bool = False
+    # Запит із розгорнутими скороченнями («арт» → «артилерійський»). Саме його
+    # бачать dense-гілка й реранкер; без скорочень дорівнює `raw`.
+    expanded: str = ""
 
     @property
     def match_terms(self) -> list[str]:
@@ -242,9 +265,25 @@ def _lemmatize(tokens: list[str], language: str) -> list[str]:
         return tokens
 
 
+def expand_abbreviations(query: str) -> str:
+    """Розгорнути розмовні й службові скорочення цілими словами.
+
+    Регресія з живого запиту «що таке арт підрозділ?»: «арт» не лематизується
+    в «артилерійський», тож BM25 шукав лише «підрозділ» — слово, що є майже в
+    кожному фрагменті підручника, — і визначення з глосарію (с. 154, 156) до
+    реранкера не дійшли. Список свідомо короткий і однозначний: краще не
+    розгорнути, ніж розгорнути хибно.
+    """
+    def repl(match: re.Match[str]) -> str:
+        return ABBREVIATIONS_UK.get(match.group(0).casefold(), match.group(0))
+
+    return _ABBREVIATION_RE.sub(repl, query)
+
+
 def analyze_query(query: str, *, language: str = "uk") -> QueryTerms:
-    """Нормалізувати, токенізувати, лематизувати, вибрати коди."""
-    normalized = _normalize(query)
+    """Нормалізувати, розгорнути скорочення, токенізувати, лематизувати, вибрати коди."""
+    expanded = expand_abbreviations(query)
+    normalized = _normalize(expanded)
     forms = _TOKEN_RE.findall(normalized)
     # Коди беруться з СИРОГО запиту: casefold і нормалізація тире можуть
     # змінити позначення, а воно мусить лишитись побайтово тим, що написав
@@ -258,6 +297,7 @@ def analyze_query(query: str, *, language: str = "uk") -> QueryTerms:
         lemmas=lemmas,
         codes=codes,
         anchored=fusion.has_lexical_anchor(query),
+        expanded=expanded,
     )
 
 
@@ -333,6 +373,19 @@ class RerankerLike(Protocol):
     """
 
     def score(self, query: str, texts: list[str]) -> list[float]: ...
+
+
+def _accepts_progress(reranker: Any) -> bool:
+    """Чи приймає `score()` реранкера необов'язковий `on_progress`.
+
+    Протокол `RerankerLike` його не вимагає (контракт модуля — лише
+    `score(query, texts)`), тож перевіряємо сигнатуру, а не ловимо TypeError:
+    той маскував би справжні помилки всередині скорингу.
+    """
+    try:
+        return "on_progress" in inspect.signature(reranker.score).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 # ---------------------------------------------- символьна n-грамна гілка
@@ -483,7 +536,9 @@ class HybridRetriever:
         allowed: set[int] | None,
         selectivity: float,
     ) -> tuple[list[tuple[int, float]], str]:
-        vectors = self.provider.embed_queries([terms.raw])
+        # Розгорнутий запит: «арт підрозділ» в ембедингу має значити те саме,
+        # що й «артилерійський підрозділ» у тексті підручника.
+        vectors = self.provider.embed_queries([terms.expanded or terms.raw])
         query_vec = np.asarray(vectors, dtype=np.float32).reshape(-1)
         index = self.index_for(collection_id)
 
@@ -665,8 +720,13 @@ class HybridRetriever:
         filters: MetadataFilter | None = None,
         char_budget: int | None = None,
         language: str = "uk",
+        on_progress: Callable[[str, int, int], None] | None = None,
     ) -> tuple[list[RetrievedChunk], RetrievalDebug]:
         """Повний конвеєр. Повертає фінальні фрагменти й діагностику.
+
+        `on_progress(stage, done, total)` викликається з ТОГО САМОГО потоку, що й
+        пошук, під час реранкінгу — найдовшого етапу (десятки секунд на CPU).
+        Колбек має бути швидким і не кидати: він лише повідомляє UI.
 
         Фрагменти повертаються НАВІТЬ при спрацюванні утримання: екран «Чому
         ця відповідь» має показати викладачеві, що саме система знайшла і чому
@@ -777,7 +837,7 @@ class HybridRetriever:
             timings["dedup"] = (clock() - t0) * 1000.0
 
             t0 = clock()
-            self._rerank(query, deduped)
+            self._rerank(terms.expanded or query, deduped, on_progress=on_progress)
             timings["rerank"] = (clock() - t0) * 1000.0
             debug.reranked_count = len(deduped)
 
@@ -814,23 +874,55 @@ class HybridRetriever:
             debug.abstain_confidence = round(float(confidence), 6)
             debug.latency_ms = {k: round(v, 3) for k, v in timings.items()}
             debug.candidates = self._debug_candidates(
-                head, deduped, final, dropped, weights, strategy, selectivity, total
+                head, deduped, final, dropped, weights, strategy, selectivity, total,
+                reranker=self._reranker_label(),
             )
             return final, debug
 
     # -------------------------------------------------------------- реранкінг
-    def _rerank(self, query: str, items: Sequence[RetrievedChunk]) -> None:
+    def _rerank(
+        self,
+        query: str,
+        items: Sequence[RetrievedChunk],
+        *,
+        on_progress: Callable[[str, int, int], None] | None = None,
+    ) -> None:
         """Проставити `rerank_score` кожному кандидату. Без реранкера — нічого.
 
         Реранкер ін'єктується, а не імпортується: у stub-режимі й у CI його
         може не бути зовсім, і пошук зобов'язаний працювати без нього.
+
+        Прогрес («оцінено N з 50») звітує САМ реранкер, після кожного свого
+        батча. Дробити кандидатів тут на групи не можна: int8-реранкер дає
+        інший скор тій самій парі в іншому батчі, тобто звіт про прогрес тихо
+        змінив би джерела відповіді. Реранкер без такої можливості (сторонній,
+        тестовий) просто повідомляє початок і кінець.
         """
         if not items or self.reranker is None:
             return
         texts = [r.chunk.rerank_text or r.chunk.display_text for r in items]
-        scores = list(self.reranker.score(query, texts))
+        if on_progress is None:
+            scores = list(self.reranker.score(query, texts))
+        else:
+            on_progress("rerank", 0, len(texts))
+            if _accepts_progress(self.reranker):
+                scores = list(self.reranker.score(
+                    query, texts,
+                    on_progress=lambda done, total: on_progress("rerank", done, total),
+                ))
+            else:
+                scores = list(self.reranker.score(query, texts))
+                on_progress("rerank", len(texts), len(texts))
         for item, score in zip(items, scores, strict=False):
             item.rerank_score = float(score)
+
+    def _reranker_label(self) -> str | None:
+        """Назва реранкера для діагностики; для LLM — чи спрацював запасний шлях."""
+        if self.reranker is None:
+            return None
+        mode = getattr(self.reranker, "last_mode", None)
+        name = getattr(self.reranker, "name", None) or type(self.reranker).__name__
+        return f"{name}:{mode}" if mode and mode != name else str(name)
 
     @staticmethod
     def _confidence_scores(items: Sequence[RetrievedChunk]) -> list[float]:
@@ -868,6 +960,8 @@ class HybridRetriever:
         strategy: str,
         selectivity: float,
         total: int,
+        *,
+        reranker: str | None = None,
     ) -> list[dict[str, Any]]:
         """Рядки для екрана «Чому ця відповідь».
 
@@ -891,6 +985,9 @@ class HybridRetriever:
                 "selectivity": round(selectivity, 4),
                 "collection_chunks": total,
                 "duplicates_dropped": [d.as_dict() for d in dropped],
+                # Яким реранкером оцінено кандидатів (llm / fallback / onnx-клас):
+                # без цього шкалу скорів на екрані «Чому ця відповідь» не прочитати.
+                "reranker": reranker,
             }
         ]
         by_id = {r.chunk.id: r for r in reranked}

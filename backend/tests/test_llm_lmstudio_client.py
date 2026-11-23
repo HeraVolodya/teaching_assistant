@@ -14,6 +14,7 @@ import httpx
 import pytest
 
 from app.backends.base import (
+    ChatParams,
     LlmTimeout,
     LoadConfig,
     ModelLoadRefused,
@@ -23,6 +24,7 @@ from app.backends.base import (
 from app.backends.lmstudio_client import (
     LmStudioClient,
     _iter_sse_deltas,
+    _parse_model,
     candidate_base_urls,
     read_configured_port,
 )
@@ -486,3 +488,134 @@ async def test_ttft_timeout_after_tokens_emitted_is_not_retried() -> None:
                 pass
 
     assert calls == [True]
+
+
+# ------------------------------------------------- міркування reasoning-моделей
+# Замір на живому LM Studio 0.4.23 з Gemma 4 E4B і промптом застосунку: 627
+# прихованих токенів міркування → перший видимий токен через 23.3 с; з
+# `reasoning_effort: "none"` — через 0.84 с, відповідь по суті та сама.
+# `reasoning: "off"`, `reasoning.effort` і `chat_template_kwargs` на цій поверхні
+# LM Studio мовчки ігнорує — тому тест пришпилює саме цей ключ.
+
+def _reasoning_model(key: str = "google/gemma-4-e4b", *, loaded: bool = True) -> dict:
+    raw = _model(key, loaded=loaded)
+    raw["capabilities"] = {"reasoning": {"allowed_options": ["off", "on"], "default": "on"}}
+    return raw
+
+
+def test_reasoning_capability_is_read_from_v1_models() -> None:
+    info = _parse_model(_reasoning_model())
+    assert info.reasoning_options == ("off", "on")
+    # Модель без такої можливості — порожньо, а не вигадане «так».
+    assert _parse_model(_model("org/plain", loaded=True)).reasoning_options == ()
+
+
+async def _chat_payloads(models: list[dict], params: ChatParams | None) -> list[dict]:
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/models" in request.url.path:
+            return _models_response(*models)
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, content=sse("Відповідь."))
+
+    async with LmStudioClient(BASE, transport=httpx.MockTransport(handler)) as c:
+        text = "".join([d async for d in c.chat_stream(
+            [{"role": "user", "content": "?"}], params=params)])
+    assert text == "Відповідь."
+    return sent
+
+
+async def test_reasoning_off_is_sent_as_reasoning_effort_none() -> None:
+    sent = await _chat_payloads([_reasoning_model()], ChatParams(reasoning="off"))
+    assert sent[0]["reasoning_effort"] == "none"
+    # Ігноровані LM Studio ключі не шлемо: вони лише створюють ілюзію керування.
+    assert "reasoning" not in sent[0]
+    assert "chat_template_kwargs" not in sent[0]
+
+
+async def test_reasoning_is_left_to_the_model_when_not_requested() -> None:
+    sent = await _chat_payloads([_reasoning_model()], ChatParams())
+    assert "reasoning_effort" not in sent[0]
+
+
+async def test_model_without_reasoning_capability_never_gets_the_parameter() -> None:
+    """LM Studio відповідає таким моделям помилкою «does not support reasoning
+    configuration» — тож параметр шлемо лише за оголошеною можливістю."""
+    sent = await _chat_payloads([_model("org/plain", loaded=True)], ChatParams(reasoning="off"))
+    assert "reasoning_effort" not in sent[0]
+
+
+async def test_rejected_reasoning_parameter_is_retried_once_without_it() -> None:
+    sent: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/models" in request.url.path:
+            return _models_response(_reasoning_model())
+        body = json.loads(request.content)
+        sent.append(body)
+        if "reasoning_effort" in body:
+            return httpx.Response(400, json={"error": "Model does not support reasoning configuration"})
+        return httpx.Response(200, content=sse("Без", " міркувань."))
+
+    async with LmStudioClient(BASE, transport=httpx.MockTransport(handler)) as c:
+        params = ChatParams(reasoning="off")
+        first = "".join([d async for d in c.chat_stream([{"role": "user", "content": "?"}], params=params)])
+        second = "".join([d async for d in c.chat_stream([{"role": "user", "content": "?"}], params=params)])
+
+    assert first == second == "Без міркувань."
+    # Рівно один зайвий запит за весь час: відмову запам'ятовано.
+    assert ["reasoning_effort" in s for s in sent] == [True, False, False]
+
+
+# --------------------------------------------------- розігрів (JIT заздалегідь)
+async def _ensure(models: list[dict], model: str | None = None) -> tuple[str | None, list[dict]]:
+    posted: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "/models" in request.url.path:
+            return _models_response(*models)
+        posted.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "."}}]})
+
+    async with LmStudioClient(BASE, transport=httpx.MockTransport(handler)) as c:
+        key = await c.ensure_loaded(model)
+    return key, posted
+
+
+async def test_ensure_loaded_triggers_jit_with_a_one_token_request() -> None:
+    key, posted = await _ensure([_reasoning_model(loaded=False)])
+    assert key == "google/gemma-4-e4b"
+    assert len(posted) == 1
+    assert posted[0]["model"] == "google/gemma-4-e4b"
+    assert posted[0]["max_tokens"] == 1
+    # І тут без міркувань: інакше «один токен» розтягнувся б на ланцюжок.
+    assert posted[0]["reasoning_effort"] == "none"
+
+
+async def test_ensure_loaded_does_nothing_when_the_model_is_already_in_memory() -> None:
+    key, posted = await _ensure([_reasoning_model(loaded=True)])
+    assert key == "google/gemma-4-e4b"
+    assert posted == []
+
+
+async def test_ensure_loaded_never_picks_a_model_for_the_teacher() -> None:
+    """Кілька моделей, жодна не піднята — вибір за викладачем, не за нами."""
+    key, posted = await _ensure([_model("org/a", loaded=False), _model("org/b", loaded=False)])
+    assert key is None
+    assert posted == []
+
+
+async def test_ensure_loaded_honours_the_configured_model() -> None:
+    key, posted = await _ensure(
+        [_model("org/a", loaded=False), _model("org/b", loaded=False)], model="org/b")
+    assert key == "org/b"
+    assert [p["model"] for p in posted] == ["org/b"]
+
+
+async def test_ensure_loaded_is_silent_when_lmstudio_is_down() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    async with LmStudioClient(BASE, transport=httpx.MockTransport(handler)) as c:
+        assert await c.ensure_loaded() is None

@@ -29,6 +29,7 @@ from app import net_guard
 
 net_guard.install()
 
+import asyncio  # noqa: E402
 import logging  # noqa: E402
 from collections.abc import AsyncIterator  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
@@ -83,8 +84,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         resolved = settings or get_settings()
         services = build_services(resolved)
         services.events.attach_loop()
+        services.loop = asyncio.get_running_loop()
         application.state.services = services
         application.state.settings = resolved
+
+        # Ембедер і реранкер — у фоні, БЕЗ очікування: старт API лишається
+        # швидким, а перше питання вже не платить за ONNX-сесії. LLM тут НЕ
+        # піднімаємо: викладач може лише індексувати, а VRAM потрібна
+        # VLM-ремонту; модель піднімається при відкритті чату (`warm_llm`).
+        if resolved.warmup and not resolved.stub:
+            services.spawn(asyncio.to_thread(services.warm_models), name="models-warmup")
 
         services.supervisor = create_supervisor(
             resolved, db=services.db, emit=services.emit

@@ -14,9 +14,11 @@ import numpy as np
 import pytest
 
 from app.embeddings.onnx_backend import (
+    ORT_THREADS_ENV,
     ModelFilesMissing,
     OnnxEmbeddingProvider,
     TokenizerContractError,
+    default_intra_op_threads,
     plan_batches,
     select_providers,
 )
@@ -315,3 +317,24 @@ def test_missing_eos_token_is_a_fatal_construction_error() -> None:
             tokenizer=_NoEos(),
             session=_FakeSession(),
         )
+
+
+# --------------------------------------------------------- потоки ORT
+# Замір (Core Ultra 9 285H: 6 P + 8 E + 2 LP-E, без HT; реранкер, 12 пар, підряд):
+# 15 потоків — 69.3 с, 8 — 28.4 с, 6 — 33.4 с, 4 — 43.0 с. «Усі ядра мінус одне»
+# на гібридному CPU вдвічі повільніше за половину.
+@pytest.mark.parametrize(("cpus", "expected"), [
+    (16, 8), (12, 6), (8, 4), (4, 2), (2, 1), (1, 1), (64, 8),
+])
+def test_ort_threads_are_half_the_cpus_capped_at_eight(monkeypatch, cpus: int, expected: int) -> None:
+    monkeypatch.delenv(ORT_THREADS_ENV, raising=False)
+    assert default_intra_op_threads(cpus) == expected
+
+
+def test_ort_threads_can_be_pinned_per_machine(monkeypatch) -> None:
+    monkeypatch.setenv(ORT_THREADS_ENV, "3")
+    assert default_intra_op_threads(16) == 3
+    # Сміття й нуль не ламають запуск — лишається евристика.
+    for bad in ("0", "багато", "-2"):
+        monkeypatch.setenv(ORT_THREADS_ENV, bad)
+        assert default_intra_op_threads(16) == 8

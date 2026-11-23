@@ -618,7 +618,7 @@ async def draft_questions(
     out: list[QuestionDraft] = []
     names = titles or {}
     # Низька температура: питання має бути точним, а не оригінальним.
-    params = ChatParams(temperature=0.1, max_tokens=120)
+    params = ChatParams(temperature=0.1, max_tokens=120, reasoning="off")
 
     for chunk in chunks:
         excerpt = chunk.display_text[:max_excerpt_chars]

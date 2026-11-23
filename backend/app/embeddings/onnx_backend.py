@@ -56,10 +56,12 @@ from app.embeddings.registry import UK_RETRIEVAL_TASK, EmbeddingModel, Pooling
 __all__ = [
     "DEVICE_ENV",
     "MAX_BATCH_ROWS",
+    "ORT_THREADS_ENV",
     "PROVIDERS_ENV",
     "ModelFilesMissing",
     "OnnxEmbeddingProvider",
     "TokenizerContractError",
+    "default_intra_op_threads",
     "plan_batches",
     "select_providers",
 ]
@@ -68,6 +70,30 @@ log = logging.getLogger(__name__)
 
 DEVICE_ENV = "ASISTENT_EMBED_DEVICE"        # auto | cpu | cuda | coreml
 PROVIDERS_ENV = "ASISTENT_EMBED_PROVIDERS"  # явний список ORT EP через кому
+ORT_THREADS_ENV = "ASISTENT_ORT_THREADS"    # потоки ORT для ембедера й реранкера
+
+# Стеля потоків ORT. Понад неї приріст на ноутбучних CPU вже від'ємний.
+MAX_INTRA_OP_THREADS = 8
+
+
+def default_intra_op_threads(cpu_count: int | None = None) -> int:
+    """Скільки потоків дати ORT: `min(8, cpu_count // 2)`, а не `cpu_count - 1`.
+
+    ЗАМІР, А НЕ ЗДОГАД (Core Ultra 9 285H: 6 P + 8 E + 2 LP-E ядер, без HT;
+    реранкер, 12 пар по одній, однакові умови підряд): 15 потоків — 69.3 с,
+    8 — 28.4 с, 6 — 33.4 с, 4 — 43.0 с; скори бітово однакові. Ембедер: запит
+    90 → 44 мс, пакет документів на 13 % швидше. Кожна операція графа
+    синхронна: потік, що потрапив на повільне E/LP-E-ядро, тримає решту, і
+    «усі ядра мінус одне» на гібридних CPU вдвічі повільніше за половину.
+    На машинах із HT `cpu_count // 2` — це якраз фізичні ядра.
+
+    `ASISTENT_ORT_THREADS` перевизначає значення для конкретної машини.
+    """
+    env = os.environ.get(ORT_THREADS_ENV, "").strip()
+    if env.isdigit() and int(env) > 0:
+        return int(env)
+    count = cpu_count if cpu_count is not None else (os.cpu_count() or 2)
+    return max(1, min(MAX_INTRA_OP_THREADS, count // 2))
 
 # Стеля рядків у батчі понад бюджет токенів. Потрібна лише для дуже коротких
 # рядків (запити), де бюджет токенів дозволив би тисячі рядків і батч почав би
@@ -286,8 +312,9 @@ class OnnxEmbeddingProvider(BaseEmbeddingProvider):
 
         options = ort.SessionOptions()
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        # Фізичні ядра мінус одне — щоб індексація не «з'їдала» чутливість UI.
-        options.intra_op_num_threads = max(1, (os.cpu_count() or 2) - 1)
+        # Не «усі ядра мінус одне»: на гібридних CPU це вдвічі повільніше
+        # (див. `default_intra_op_threads`), а заодно й лишає UI чутливим.
+        options.intra_op_num_threads = default_intra_op_threads()
         options.inter_op_num_threads = 1
 
         providers = select_providers()

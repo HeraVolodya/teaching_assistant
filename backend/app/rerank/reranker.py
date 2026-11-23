@@ -13,9 +13,19 @@
      Лікується динамічним паддінгом із бакетуванням за довжиною — тим самим
      прийомом, що й в ембедері.
   3. **Одна пара — один прохід.** Лікується батчуванням за бюджетом токенів.
+     Замір на живих даних (11/2026): для цього int8-експорту батч не дає
+     виграшу в швидкості, тримає ~19 ГБ піку пам'яті й робить скор залежним
+     від сусідів по батчу (див. `DEFAULT_BATCH_ROWS` — чому режим не змінено).
 
 Тобто «реранкер занадто повільний» — хибний висновок; правильний висновок —
-«реранкер запускали найгіршим із можливих способів».
+«реранкер запускали найгіршим із можливих способів». Четвертий множник знайдено
+в 11/2026: `intra_op_num_threads = cpu_count - 1` на гібридному CPU (з E- і
+LP-E-ядрами) удвічі повільніше за 8 потоків (`default_intra_op_threads`).
+Решта ціни на CPU чесна: 50 кандидатів × ~650 токенів — це ~32 тис. токенів
+крізь 0.6B-модель, ≈ 80 с на ноутбуці Core Ultra 9. Найдорожча частина з того,
+що лишилось, — маскові операції уваги експорту (`Where`/`IsNaN` по
+[B, 16, L, L], ~33 % часу) і `lm_head` по всіх позиціях (~10 %), а їх без
+переекспорту моделі не прибрати.
 
 **FlashAttention для крос-енкодерів НЕ вмикати.** Для голів
 sequence-classification він на 20-45% ПОВІЛЬНІШИЙ (керівництво супровідників
@@ -51,6 +61,7 @@ import logging
 import os
 import re
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -82,6 +93,7 @@ MODEL_ENV = "ASISTENT_RERANK_MODEL"
 MODEL_DIR_ENV = "ASISTENT_RERANK_MODEL_DIR"
 TOKEN_BUDGET_ENV = "ASISTENT_RERANK_TOKEN_BUDGET"
 MAX_TOKENS_ENV = "ASISTENT_RERANK_MAX_TOKENS"
+BATCH_ROWS_ENV = "ASISTENT_RERANK_BATCH_ROWS"
 PROVIDERS_ENV = "ASISTENT_RERANK_PROVIDERS"
 DEVICE_ENV = "ASISTENT_RERANK_DEVICE"
 
@@ -93,6 +105,18 @@ DEFAULT_MAX_PAIR_TOKENS = 2048
 # увагу по всій парі: вартість росте квадратично за довжиною, а не лінійно.
 DEFAULT_TOKEN_BUDGET = 8192
 MAX_BATCH_ROWS = 32
+# СКЛАД БАТЧА ВПЛИВАЄ НА СКОРИ — тому типовий режим не змінюємо.
+# `model_quantized.onnx` — динамічна int8-квантизація: шкала активацій рахується
+# на ВЕСЬ вхідний тензор, тобто на всі рядки батча разом із позиціями паддінгу.
+# Той самий кандидат в іншому батчі отримує інший скор, а топ-5 «пари поодинці»
+# збігався з батчованим лише на 2/5. Жоден варіант не є еталоном (обидва — шум
+# одного порядку), але зміна режиму міняє джерела відповіді, тож типово лишається
+# той, на якому застосунок уже працює.
+# Ціна батчів, виміряна на 50 реальних кандидатах: пік ~19 ГБ RAM (logits
+# [B, L, 151669] fp32 на батч 8192 токени); пари поодинці — ~6 ГБ і на ~30 %
+# швидше. На ПК із 16 ГБ варто `ASISTENT_RERANK_BATCH_ROWS=1`, свідомо прийнявши,
+# що набір джерел зміниться.
+DEFAULT_BATCH_ROWS = MAX_BATCH_ROWS
 
 # Українська інструкція реранкера. Той самий текст, що і в ембедері, лишається
 # у registry ембедингів; тут він свій, бо крос-енкодер бачить інший формат.
@@ -305,7 +329,13 @@ class StubReranker:
     def model_key(self) -> str:
         return f"stub:{model_key(self._model)}"
 
-    def score(self, query: str, docs: list[str]) -> list[float]:
+    def score(
+        self,
+        query: str,
+        docs: list[str],
+        *,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[float]:
         if not docs:
             return []
         q_tokens = set(_tokens(query))
@@ -324,6 +354,9 @@ class StubReranker:
             digest = hashlib.blake2b(f"{query}\x00{doc}".encode(), digest_size=4).digest()
             jitter = int.from_bytes(digest, "little") / 2**32 * 1e-4
             out.append(float(min(1.0, max(0.0, base + jitter))))
+        if on_progress is not None:
+            # Заглушка рахує миттєво — досить одного повідомлення «готово».
+            on_progress(len(docs), len(docs))
         return out
 
 
@@ -339,6 +372,7 @@ class OnnxReranker:
         instruction: str | None = None,
         max_pair_tokens: int | None = None,
         token_budget: int | None = None,
+        batch_rows: int | None = None,
         session: Any | None = None,
         tokenizer: Any | None = None,
     ) -> None:
@@ -348,11 +382,14 @@ class OnnxReranker:
 
         env_max = os.environ.get(MAX_TOKENS_ENV, "").strip()
         env_budget = os.environ.get(TOKEN_BUDGET_ENV, "").strip()
+        env_rows = os.environ.get(BATCH_ROWS_ENV, "").strip()
         requested = max_pair_tokens or (int(env_max) if env_max.isdigit() else DEFAULT_MAX_PAIR_TOKENS)
         self._max_pair_tokens = max(16, min(requested, model.max_seq - 8))
         self._token_budget = token_budget or (
             int(env_budget) if env_budget.isdigit() else DEFAULT_TOKEN_BUDGET
         )
+        rows = batch_rows or (int(env_rows) if env_rows.isdigit() else DEFAULT_BATCH_ROWS)
+        self._batch_rows = max(1, min(MAX_BATCH_ROWS, rows))
 
         self._tok = tokenizer if tokenizer is not None else self._load_tokenizer()
         self._pad_id = self._resolve_pad()
@@ -382,6 +419,12 @@ class OnnxReranker:
             self._inputs = {i.name: i for i in self._session.get_inputs()}
 
         self._output_names = [o.name for o in self._session.get_outputs()]
+        # Просимо в ORT ЛИШЕ logits. Декодерний експорт Qwen3 віддає ще 56 тензорів
+        # `present.*` (KV-кеш, ~230 КБ на токен), які скорингу не потрібні: з
+        # `run(None, …)` вони матеріалізуються в numpy на кожен прохід.
+        self._fetch = ["logits"] if "logits" in self._output_names else None
+        if self._fetch is not None:
+            self._output_names = list(self._fetch)
 
     # ------------------------------------------------------------ завантаження
     def _load_tokenizer(self) -> Any:
@@ -408,17 +451,19 @@ class OnnxReranker:
                 f"Не знайдено файл моделі {self._model.onnx_file} для реранкера "
                 f"{self._model.id} у {self._dir}."
             )
+        # Логіка вибору EP і кількості потоків спільна з ембедером, змінні
+        # середовища EP — власні: ембедер і реранкер свідомо можуть жити на
+        # різних пристроях (на 8-12 ГБ VRAM, зайнятих LM Studio, це типова
+        # конфігурація).
+        from app.embeddings.onnx_backend import default_intra_op_threads, select_providers
+
         options = ort.SessionOptions()
         # O3/int8 на CPU — саме той множник, якого бракувало в попередніх вимірах.
         # FlashAttention для крос-енкодерів НЕ вмикаємо свідомо (див. докстрінг модуля).
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        options.intra_op_num_threads = max(1, (os.cpu_count() or 2) - 1)
+        # НЕ `cpu_count - 1`: 15 потоків на 6P+8E+2LP-E — 69 с там, де 8 — 28 с.
+        options.intra_op_num_threads = default_intra_op_threads()
         options.inter_op_num_threads = 1
-
-        # Логіка вибору EP спільна з ембедером, змінні середовища — власні:
-        # ембедер і реранкер свідомо можуть жити на різних пристроях (на 8-12 ГБ
-        # VRAM, зайнятих LM Studio, це типова конфігурація).
-        from app.embeddings.onnx_backend import select_providers
 
         providers = select_providers(
             list(ort.get_available_providers()),
@@ -547,19 +592,34 @@ class OnnxReranker:
         exp = np.exp(shifted)
         return exp[:, -1] / exp.sum(axis=1)
 
-    def score(self, query: str, docs: list[str]) -> list[float]:
+    def score(
+        self,
+        query: str,
+        docs: list[str],
+        *,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[float]:
+        """Скори пар. `on_progress(done, total)` — після КОЖНОГО батча.
+
+        Прогрес звітується зсередини, а не дробленням `docs` ззовні: дроблення
+        змінило б склад батчів, а з ним — скори (див. `DEFAULT_BATCH_ROWS`).
+        """
         if not docs:
             return []
         encoded = [self._encode_pair(query, d) for d in docs]
         out = np.zeros(len(docs), dtype=np.float64)
+        done = 0
         for batch in plan_pair_batches(
-            [len(e) for e in encoded], token_budget=self._token_budget, max_rows=MAX_BATCH_ROWS
+            [len(e) for e in encoded], token_budget=self._token_budget, max_rows=self._batch_rows
         ):
             feeds, mask = self._feeds([encoded[i] for i in batch])
-            raw = self._session.run(None, feeds)
+            raw = self._session.run(self._fetch, feeds)
             scores = self._scores_from_outputs(list(raw), mask)
             for position, source_index in enumerate(batch):
                 out[source_index] = float(scores[position])
+            done += len(batch)
+            if on_progress is not None:
+                on_progress(done, len(docs))
         return [float(x) for x in out]
 
     def close(self) -> None:

@@ -41,6 +41,7 @@ __all__ = [
     "CHAT_DEBUG",
     "CHAT_DONE",
     "CHAT_ERROR",
+    "CHAT_PROGRESS",
     "CHAT_TOKEN",
     "DOC_READY",
     "EVENT_TYPES",
@@ -68,6 +69,10 @@ CHAT_DONE = "chat.done"              # {messageId, abstained, tokensOut, ttftMs}
 CHAT_ERROR = "chat.error"            # {messageId, errorCode, message}
 MODEL_DOWNLOAD = "model.download"    # {downloadId, model, percent, state}
 WORKER_STATUS = "worker.status"      # {mode, running, active}
+# Прогрес пошуку всередині ходу: {messageId, stage, done, total}. Лише в тілі
+# відповіді /api/chat, НЕ в спільній шині: це ефемерний стан, і десяток кадрів
+# на кожне питання витісняв би з кільцевого буфера події, що мають значення.
+CHAT_PROGRESS = "chat.progress"
 
 EVENT_TYPES: tuple[str, ...] = (
     JOB_PROGRESS, JOB_FAILED, DOC_READY,

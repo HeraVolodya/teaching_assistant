@@ -295,3 +295,165 @@ async def test_why_reports_missing_chunk_instead_of_crashing(tmp_path) -> None:
     assert why["fragments"] == [
         {"ordinal": 1, "chunkUid": "0000000000000000000000000000dead", "missing": True}
     ]
+
+
+# ------------------------------------------------ прогрес і розігрів моделі
+async def test_rerank_progress_streams_in_the_body_but_not_on_the_bus(tmp_path) -> None:
+    """Реранкінг 50 кандидатів на CPU — десятки секунд; без кадрів прогресу
+    екран мовчить і читається як зависання. Кадри ефемерні: у спільній шині
+    вони витісняли б із кільцевого буфера події, що мають значення."""
+    settings = make_settings(tmp_path, worker_mode="inline")
+    async with api_client(settings) as (client, _app):
+        _assistant, _collection_id, session = await _ready_assistant(client)
+        response = await client.post("/api/chat", json={
+            "sessionId": session["id"], "message": "Що таке деривація снаряда?",
+        })
+        message_id = response.headers["x-message-id"]
+        history = (await client.get("/api/events/history", params={"limit": 500})).json()
+
+    progress = _frames(response.text, "chat.progress")
+    assert progress, "реранкінг пройшов без жодного кадру прогресу"
+    assert {p["messageId"] for p in progress} == {message_id}
+    assert {p["stage"] for p in progress} == {"rerank"}
+    assert progress[-1]["done"] == progress[-1]["total"] > 0
+    # Прогрес — до результату пошуку, а не впереміш із токенами.
+    events = [event for event, _ in read_sse(response.text)]
+    assert events.index("chat.debug") > max(
+        i for i, e in enumerate(events) if e == "chat.progress")
+    assert not any(e["type"] == "chat.progress" for e in history)
+    assert _frames(response.text, "chat.done")
+
+
+class _WarmableBackend(_ScriptedBackend):
+    """Бекенд, що вміє піднімати модель заздалегідь, і рахує, скільки разів."""
+
+    def __init__(self, text: str, *, delay: float = 0.0) -> None:
+        super().__init__(text)
+        self.delay = delay
+        self.warmups = 0
+
+    async def ensure_loaded(self, model: str | None = None) -> str | None:
+        import asyncio
+
+        self.warmups += 1
+        await asyncio.sleep(self.delay)
+        return "scripted"
+
+
+async def test_opening_a_chat_starts_loading_the_model(tmp_path) -> None:
+    """Історію UI читає саме тоді, коли викладач відкриває чат: поки питання
+    набирається, 15–22 с JIT-завантаження LM Studio минають."""
+    import asyncio
+
+    settings = make_settings(tmp_path, worker_mode="inline")
+    async with api_client(settings) as (client, application):
+        _assistant, _collection_id, session = await _ready_assistant(client)
+        backend = _WarmableBackend("Відповідь [1].")
+        application.state.services._backend = backend
+
+        await client.get(f"/api/sessions/{session['id']}/messages")
+        for _ in range(100):
+            if backend.warmups:
+                break
+            await asyncio.sleep(0.01)
+
+    assert backend.warmups == 1
+
+
+async def test_chat_loads_the_model_in_parallel_with_search_once(tmp_path) -> None:
+    settings = make_settings(tmp_path, worker_mode="inline")
+    async with api_client(settings) as (client, application):
+        _assistant, _collection_id, session = await _ready_assistant(client)
+        backend = _WarmableBackend("Деривація — це відхилення [1].", delay=0.05)
+        application.state.services._backend = backend
+
+        response = await client.post("/api/chat", json={
+            "sessionId": session["id"], "message": "Що таке деривація снаряда?",
+        })
+
+    assert backend.warmups == 1
+    assert backend.calls, "генерація так і не почалась"
+    assert "".join(t["delta"] for t in _frames(response.text, "chat.token"))
+
+
+async def test_concurrent_warmups_share_one_request(tmp_path) -> None:
+    """Відкриття чату і питання, поставлене одразу, не мають слати LM Studio
+    два запити на завантаження."""
+    import asyncio
+
+    from app.api.state import build_services
+
+    services = build_services(make_settings(tmp_path))
+    backend = _WarmableBackend("так", delay=0.05)
+    services._backend = backend
+    try:
+        await asyncio.gather(services.warm_llm(), services.warm_llm(), services.warm_llm())
+    finally:
+        services.close()
+    assert backend.warmups == 1
+
+
+def test_model_warmup_builds_one_retriever_under_concurrency(tmp_path) -> None:
+    """Фоновий розігрів і перше питання одночасно: без замка вийшли б дві копії
+    ембедера й реранкера (~2 ГБ RAM)."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.api.state import build_services
+
+    services = build_services(make_settings(tmp_path))
+    try:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            retrievers = list(pool.map(lambda _: services.retriever, range(4)))
+        services.warm_models()
+        assert len({id(r) for r in retrievers}) == 1
+        assert services.retriever is retrievers[0]
+    finally:
+        services.close()
+
+
+# ------------------------------------------------------ вибір реранкера
+def test_llm_reranker_is_the_default_and_loads_no_onnx_weights(tmp_path) -> None:
+    """CPU-крос-енкодер (1.2 ГБ ваг, ~80 с на 50 кандидатів) лише запасний: до
+    першої відмови LM Studio він навіть не створюється."""
+    from app.api.state import build_services
+    from app.rerank.llm_reranker import LlmListwiseReranker
+
+    services = build_services(make_settings(tmp_path, stub=False))
+    try:
+        reranker = services.reranker
+        assert isinstance(reranker, LlmListwiseReranker)
+        assert reranker._fallback is None
+        assert not any(p.code == "RERANKER_MISSING" for p in services.problems)
+    finally:
+        services.close()
+
+
+def test_onnx_reranker_can_be_chosen_explicitly(tmp_path) -> None:
+    from app.api.state import build_services
+    from app.rerank.reranker import StubReranker
+
+    services = build_services(make_settings(tmp_path, rerank_with="onnx"))
+    try:
+        assert isinstance(services.reranker, StubReranker)
+    finally:
+        services.close()
+
+
+def test_model_warmup_never_calls_the_llm_reranker(tmp_path) -> None:
+    """Розігрів на старті не має піднімати мовну модель у LM Studio — а запит
+    LLM-реранкера саме це й зробив би."""
+    from app.api.state import build_services
+
+    class _NoCalls:
+        name = "llm"
+
+        def score(self, query, docs):
+            raise AssertionError("LLM-реранкер не мав викликатися під час розігріву")
+
+    services = build_services(make_settings(tmp_path))
+    services._reranker = _NoCalls()
+    try:
+        services.warm_models()
+        assert services.retriever.reranker is services._reranker
+    finally:
+        services.close()

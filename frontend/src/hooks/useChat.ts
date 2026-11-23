@@ -25,6 +25,7 @@ import type {
   ChatDebugEvent,
   ChatDoneEvent,
   ChatErrorEvent,
+  ChatProgressEvent,
   ChatTokenEvent,
   CitationDto,
 } from "@/api/types";
@@ -45,6 +46,8 @@ export interface LiveTurn {
   /** Скільки фрагментів знайшов пошук — показується ще до перших токенів. */
   found: number | null;
   documents: number | null;
+  /** «Оцінено N з M» під час реранкінгу — найдовшого етапу пошуку. */
+  progress: { done: number; total: number } | null;
 }
 
 const EMPTY_TURN: LiveTurn = {
@@ -61,6 +64,7 @@ const EMPTY_TURN: LiveTurn = {
   tokensOut: null,
   found: null,
   documents: null,
+  progress: null,
 };
 
 export interface UseChatResult {
@@ -105,6 +109,21 @@ export function useChat(sessionId: string | undefined): UseChatResult {
         try {
           for await (const frame of askQuestion({ sessionId, message: trimmed }, abort.signal)) {
             switch (frame.event) {
+              case "chat.progress": {
+                // Фаза лишається «пошук»: це прогрес ВСЕРЕДИНІ нього, а не
+                // перехід до генерації (той сигналізує `chat.debug`).
+                const data = frame.payload as ChatProgressEvent;
+                setLive((current) =>
+                  current
+                    ? {
+                        ...current,
+                        messageId: data.messageId ?? current.messageId,
+                        progress: { done: data.done, total: data.total },
+                      }
+                    : current,
+                );
+                break;
+              }
               case "chat.debug": {
                 const data = frame.payload as ChatDebugEvent;
                 setLive((current) =>

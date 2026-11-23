@@ -14,7 +14,8 @@
   2. створити ПОРОЖНЄ повідомлення асистента й одразу віддати його id —
      без стабільного `messageId` кадри `chat.token` нема до чого приліпити;
   3. пошук (у потоці: він синхронний і CPU-bound, а event loop мусить далі
-     обслуговувати SSE інших вкладок);
+     обслуговувати SSE інших вкладок); паралельно LM Studio піднімає модель,
+     а реранкінг звітує кадрами `chat.progress` — він найдовший етап;
   4. генерація;
   5. дописати повідомлення — у `finally`, тобто навіть при обриві: викладач
      бачив половину відповіді, і ця половина мусить лишитись в історії.
@@ -29,10 +30,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -43,6 +45,7 @@ from app.api.events import (
     CHAT_DEBUG,
     CHAT_DONE,
     CHAT_ERROR,
+    CHAT_PROGRESS,
     CHAT_TOKEN,
     sse_frame,
 )
@@ -141,6 +144,10 @@ def create_session(request: Request, payload: SessionIn) -> SessionOut:
 def session_messages(request: Request, session_id: str) -> list[MessageOut]:
     services = services_of(request)
     _session_row(services, session_id)
+    # UI читає історію саме тоді, коли викладач відкриває чат. Це найкращий
+    # момент попросити LM Studio підняти модель: поки питання набирається,
+    # 15–22 с JIT-завантаження минають. Ідемпотентно й без очікування.
+    services.schedule_llm_warmup()
     with services.db.connection() as con:
         rows = ChatRepo(con).messages(session_id)
     return [_message_out(r) for r in rows]
@@ -258,6 +265,7 @@ async def _chat_stream(
     question: str,
     payload: ChatIn,
 ) -> AsyncIterator[str]:
+    from app.backends.base import LOAD_TIMEOUT_S
     from app.generation.generator import CancelToken, Generator
     from app.generation.prompt_builder import citation_map
 
@@ -278,8 +286,14 @@ async def _chat_stream(
         return sse_frame(event, data, event_id=published.id)
 
     try:
+        # LM Studio піднімає модель ПАРАЛЕЛЬНО з пошуком: JIT-завантаження
+        # (15–22 с) інакше додавалося б до часу пошуку, а не ховалося за ним.
+        llm_warm = asyncio.ensure_future(services.warm_llm())
+
         # --- пошук --------------------------------------------------------
-        retriever = services.retriever
+        # Не в event loop: перший доступ створює ONNX-сесії (секунди), а цикл
+        # мусить і далі обслуговувати SSE інших вкладок.
+        retriever = await asyncio.to_thread(lambda: services.retriever)
         if retriever is None:
             yield frame(CHAT_ERROR, {
                 "messageId": message_id,
@@ -289,9 +303,29 @@ async def _chat_stream(
             })
             return
 
-        evidence, debug = await asyncio.to_thread(
-            _retrieve, services, assistant, question, payload
-        )
+        # Реранкінг 50 кандидатів на CPU — десятки секунд. Мовчання такої
+        # довжини читається як зависання, тож етап звітує «оцінено N з M».
+        loop = asyncio.get_running_loop()
+        progress: asyncio.Queue[tuple[str, int, int]] = asyncio.Queue()
+
+        def on_progress(stage: str, done: int, total: int) -> None:
+            # Цикл міг уже зупинитися (вихід застосунку посеред пошуку):
+            # повідомлення про прогрес не варте того, щоб зламати пошук.
+            with contextlib.suppress(RuntimeError):
+                loop.call_soon_threadsafe(progress.put_nowait, (stage, done, total))
+
+        search = asyncio.ensure_future(asyncio.to_thread(
+            _retrieve, services, assistant, question, payload, on_progress
+        ))
+        # Якщо вкладку закриють посеред пошуку, результат ніхто не забере; без
+        # цього збій такого «покинутого» пошуку лягав би в лог як незабраний виняток.
+        search.add_done_callback(lambda f: f.cancelled() or f.exception())
+        async for stage, done, total in _drain_progress(search, progress):
+            # Лише в тіло відповіді, не в спільну шину (див. CHAT_PROGRESS).
+            yield sse_frame(CHAT_PROGRESS, {
+                "messageId": message_id, "stage": stage, "done": done, "total": total,
+            })
+        evidence, debug = search.result()
         abstained = bool(debug.abstained)
         yield frame(CHAT_DEBUG, {
             "messageId": message_id,
@@ -314,6 +348,13 @@ async def _chat_stream(
             })
             return
 
+        if not abstained:
+            # Модель могла ще підніматися: дочекатися, щоб TTFT-таймаут
+            # генерації не з'їдало завантаження. Невдача розігріву не фатальна —
+            # генерація все одно спробує сама й повідомить зрозумілу помилку.
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(llm_warm), timeout=LOAD_TIMEOUT_S)
+
         model_id = services.settings.lmstudio_model
         generator = Generator(
             backend,
@@ -322,6 +363,7 @@ async def _chat_stream(
             persona=config.instructions,
             context_tokens=services.settings.context_tokens,
             telemetry=_Telemetry(services.db),
+            reasoning="off" if services.settings.llm_reasoning == "off" else None,
         )
         cancel = CancelToken()
 
@@ -396,8 +438,39 @@ async def _chat_stream(
     })
 
 
+async def _drain_progress(
+    task: asyncio.Future[Any], queue: asyncio.Queue[tuple[str, int, int]]
+) -> AsyncIterator[tuple[str, int, int]]:
+    """Віддавати повідомлення про прогрес, доки працює пошук у потоці.
+
+    Колбек пошуку кладе їх у чергу через `call_soon_threadsafe` — у тому самому
+    порядку, в якому цикл потім позначить задачу завершеною, тож після кінця
+    пошуку в черзі може лишитися хвіст: його теж віддаємо.
+    """
+    getter: asyncio.Future[tuple[str, int, int]] | None = None
+    try:
+        while True:
+            getter = asyncio.ensure_future(queue.get())
+            done, _ = await asyncio.wait({task, getter}, return_when=asyncio.FIRST_COMPLETED)
+            if getter in done:
+                yield getter.result()
+                continue
+            getter.cancel()
+            while not queue.empty():
+                yield queue.get_nowait()
+            return
+    finally:
+        # Вкладку закрили посеред пошуку — не лишати осиротілого очікування черги.
+        if getter is not None and not getter.done():
+            getter.cancel()
+
+
 def _retrieve(
-    services: Services, assistant: Assistant, question: str, payload: ChatIn
+    services: Services,
+    assistant: Assistant,
+    question: str,
+    payload: ChatIn,
+    on_progress: Callable[[str, int, int], None] | None = None,
 ) -> tuple[list[RetrievedChunk], RetrievalDebug]:
     """Пошук по всіх колекціях асистента.
 
@@ -431,7 +504,8 @@ def _retrieve(
     for collection in collections:
         try:
             chunks, debug = retriever.retrieve(
-                question, config, collection.id, filters=flt, language="uk"
+                question, config, collection.id, filters=flt, language="uk",
+                on_progress=on_progress,
             )
         except KeyError:
             continue

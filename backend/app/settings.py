@@ -65,11 +65,27 @@ class Settings(BaseSettings):
     # Реальний n_ctx завантаженої моделі. 8k достатньо для одноразового
     # заземленого RAG (план, §10: ~3300 токенів на запит).
     context_tokens: int = 8192
+    # Ланцюжок міркувань reasoning-моделей. "off" — просити модель відповідати
+    # одразу (лише якщо вона оголошує таку можливість); "auto" — нічого не
+    # просити, поведінка моделі за замовчуванням. Gemma 4 E4B з "auto" мовчить
+    # ~23 с перед першим видимим словом, з "off" — 0.8 с, відповідь та сама.
+    llm_reasoning: Literal["off", "auto"] = "off"
+
+    # --- розігрів ------------------------------------------------------
+    # Ембедер і реранкер піднімаються у фоні одразу після старту, а LLM — при
+    # відкритті чату й паралельно з пошуком. Без цього перше питання платило
+    # ~7 с за ONNX-сесії і 15–22 с за JIT-завантаження моделі в LM Studio.
+    warmup: bool = True
 
     # --- моделі --------------------------------------------------------
     embedding_model: str | None = None      # None → дефолт реєстру
     rerank_model: str | None = None
     use_reranker: bool = True
+    # Чим переоцінювати кандидатів: "llm" — та сама модель LM Studio, що відповідає
+    # (на GPU, ~2.5 с на 50 кандидатів), із CPU-крос-енкодером як запасним шляхом;
+    # "onnx" — лише CPU-крос-енкодер (~80 с на 50 кандидатів на Core Ultra 9).
+    # На машині без GPU LM Studio рахує на CPU, і "onnx" там може бути швидшим.
+    rerank_with: Literal["llm", "onnx"] = "llm"
 
     # --- воркери -------------------------------------------------------
     # "process" — постачання: важкі імпорти живуть у окремому процесі.
@@ -124,9 +140,12 @@ class Settings(BaseSettings):
             "default_ingest_mode": self.default_ingest_mode.value,
             "ingest_device": self.ingest_device,
             "context_tokens": self.context_tokens,
+            "llm_reasoning": self.llm_reasoning,
+            "warmup": self.warmup,
             "embedding_model": self.embedding_model,
             "rerank_model": self.rerank_model,
             "use_reranker": self.use_reranker,
+            "rerank_with": self.rerank_with,
             "lmstudio_url": self.lmstudio_url,
         }
 

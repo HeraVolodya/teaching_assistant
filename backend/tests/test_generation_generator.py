@@ -259,3 +259,42 @@ async def test_min_supporting_chunks_is_respected(confidence: str) -> None:
     gen = Generator(StubBackend(), config=cfg, context_tokens=4096)
     out = await collect(gen.answer("Питання?", evidence))
     assert result_of(out) is not None
+
+
+# --------------------------------------------------------- міркування моделі
+class ParamsSpy(StubBackend):
+    """Заглушка, що запам'ятовує параметри кожного виклику моделі."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.params: list = []
+
+    async def chat_stream(self, messages, *, params=None, **kwargs):
+        self.params.append(params)
+        async for token in super().chat_stream(messages, params=params, **kwargs):
+            yield token
+
+
+async def test_reasoning_off_reaches_the_model_on_the_direct_path() -> None:
+    """Gemma 4 інакше мовчить ~23 с, міркуючи, перш ніж сказати перше слово."""
+    backend = ParamsSpy()
+    out = await collect(Generator(backend, reasoning="off").answer(
+        "Питання?", evidence_two_documents()))
+    assert text_of(out)
+    assert [p.reasoning for p in backend.params] == ["off"]
+
+
+async def test_reasoning_off_reaches_every_map_and_reduce_call() -> None:
+    """У MAP-кроках бюджет 220 токенів: міркування з'їдали його цілком, і
+    часткові висновки виходили порожніми — тобто хибним «немає відомостей»."""
+    backend = ParamsSpy()
+    await collect(Generator(backend, reasoning="off").answer(
+        "Питання?", evidence_two_documents(), force_map_reduce=True))
+    assert len(backend.params) == 4                       # три MAP + REDUCE
+    assert {p.reasoning for p in backend.params} == {"off"}
+
+
+async def test_reasoning_is_not_requested_by_default() -> None:
+    backend = ParamsSpy()
+    await collect(Generator(backend).answer("Питання?", evidence_two_documents()))
+    assert backend.params[0].reasoning is None

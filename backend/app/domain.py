@@ -366,9 +366,12 @@ class AssistantConfig:
     # на півслові. Довший промпт з'їдав усі 600, і користувач отримував ПОРОЖНЮ
     # відповідь без жодної помилки: клієнт рахує лише дельти `content`, тож стрім
     # завершувався штатно з `tokens_out=0`.
-    # Вимкнути міркування через API не можна: LM Studio ігнорує і `reasoning: off`,
-    # і `reasoning.effort: none`, і `chat_template_kwargs.enable_thinking: false`.
-    # Єдиний важіль — бюджет. 2200 = ~600 на відповідь + запас на міркування.
+    # Тепер міркування вимикаються на запит (`ASISTENT_LLM_REASONING=off`, типово):
+    # LM Studio ігнорує `reasoning: off`, `reasoning.effort` і `chat_template_kwargs`,
+    # але виконує `reasoning_effort: "none"` (див. `lmstudio_client.py`). Бюджет
+    # 2200 лишається запобіжником для моделей, яким міркування вимкнути не можна:
+    # ~600 на відповідь + запас на ланцюжок. Модель без міркувань зупиняється
+    # сама, тож на швидкість звичайної відповіді він не впливає.
     max_tokens: int = 2200
     repeat_penalty: float = 1.08    # НІКОЛИ вище: високий штраф калічить українську словозміну
     prompt_tier: Literal["compact", "full"] = "compact"

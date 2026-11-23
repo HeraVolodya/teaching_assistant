@@ -30,7 +30,8 @@ from __future__ import annotations
 
 import time
 from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from dataclasses import replace
+from typing import Any, Literal
 
 from app.backends.base import (
     ChatParams,
@@ -132,6 +133,7 @@ class Generator:
         persona: str = "",
         context_tokens: int = 8192,
         telemetry: object | None = None,
+        reasoning: Literal["off"] | None = None,
     ) -> None:
         self.backend = backend
         self.config = config or AssistantConfig()
@@ -139,6 +141,10 @@ class Generator:
         self.persona = persona
         self.context_tokens = context_tokens
         self.telemetry = telemetry
+        # "off" — просити модель не міркувати (і в прямому проході, і в MAP/REDUCE:
+        # там бюджет MAP_MAX_TOKENS=220 міркування з'їдали цілком, і часткові
+        # висновки виходили порожніми). None — поведінка моделі за замовчуванням.
+        self.reasoning = reasoning
 
     # ------------------------------------------------------------- публічне
     async def answer(
@@ -166,7 +172,8 @@ class Generator:
                 yield ac
             return
 
-        params = generation_params(self.config, detailed=detailed)
+        params = replace(generation_params(self.config, detailed=detailed),
+                         reasoning=self.reasoning)
         kept, cap, truncated = fit_evidence(
             evidence,
             context_tokens=self.context_tokens,
@@ -293,6 +300,7 @@ class Generator:
         map_params = ChatParams(
             temperature=params.temperature, max_tokens=self.MAP_MAX_TOKENS,
             repeat_penalty=params.repeat_penalty, stop=params.stop,
+            reasoning=params.reasoning,
         )
         partials: list[tuple[str, str]] = []
         covered: list[RetrievedChunk] = []

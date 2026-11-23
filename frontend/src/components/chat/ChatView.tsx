@@ -423,6 +423,13 @@ function Phase({ turn }: { turn: LiveTurn }) {
     <div className="flex items-center gap-2.5 text-[0.8125rem] subtle">
       <Spinner className="text-accent" />
       <span>{retrieving ? t("chat.retrieving") : t("chat.generating")}</span>
+      {retrieving && turn.progress && turn.progress.total > 0 ? (
+        // Реранкінг на CPU — десятки секунд. Лічильник показує, що пошук іде,
+        // а не завис, і скільки ще лишилось.
+        <Badge tone="neutral">
+          оцінено {turn.progress.done} з {turn.progress.total} фрагм.
+        </Badge>
+      ) : null}
       {!retrieving && turn.found != null ? (
         // Число знайдених фрагментів під час очікування — не декор: воно
         // повідомляє, що система вже щось зробила, і робить довгу паузу

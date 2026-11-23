@@ -245,6 +245,13 @@ class ChatParams:
     # НІКОЛИ truncateMiddle / rollingWindow: вони ТИХО видаляють ваші докази.
     # Потрібна жорстка помилка, яку можна перехопити і перейти в map-reduce.
     context_overflow_policy: Literal["stopAtLimit"] = "stopAtLimit"
+    # Ланцюжок міркувань reasoning-моделей (Gemma 4 тощо). None — нічого не
+    # просити, модель поводиться за власним замовчуванням. У `to_payload()`
+    # НЕ потрапляє навмисно: дротовий формат і саме право його слати залежать
+    # від можливостей конкретної моделі, а їх знає лише клієнт бекенда.
+    # Замір на Gemma 4 E4B: 627 прихованих токенів міркування → перший видимий
+    # токен через 23 с; з "off" — через 0.8 с, відповідь по суті та сама.
+    reasoning: Literal["off"] | None = None
 
     def __post_init__(self) -> None:
         if self.repeat_penalty > 1.10:
@@ -350,6 +357,9 @@ class ModelInfo:
     loaded_context: int | None = None
     quantization: str | None = None
     size_bytes: int | None = None
+    # `capabilities.reasoning.allowed_options` з /api/v1/models, напр. ("off", "on").
+    # Порожньо — модель не reasoning або поверхня (v0/openai) цього не повідомляє.
+    reasoning_options: tuple[str, ...] = ()
     raw: dict[str, Any] = field(default_factory=dict)
 
 
