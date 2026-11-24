@@ -6,7 +6,7 @@
 ; «error opening file for writing» посеред розпакування ~1 ГБ.
 
 !macro NSIS_HOOK_PREINSTALL
-  DetailPrint "Завершення процесів попередньої версії Асістента..."
+  DetailPrint "Завершення процесів попередньої версії Асистента..."
   ; Саме вікно застосунку.
   nsExec::ExecToLog `taskkill /F /T /IM "Asistent.exe"`
   Pop $0
@@ -18,7 +18,7 @@
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
-  DetailPrint "Асістент встановлено. Моделі перевіряються при першому запуску."
+  DetailPrint "Асистент встановлено. Моделі перевіряються при першому запуску."
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL

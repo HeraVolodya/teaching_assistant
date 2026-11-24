@@ -165,7 +165,7 @@ impl Sidecar {
         if !python.exists() {
             return Err(format!(
                 "Python-рантайм не знайдено: {python:?}. Інсталяція пошкоджена — \
-                 перевстановіть Асістент з носія."
+                 перевстановіть Асистент з носія."
             ));
         }
 
@@ -247,7 +247,7 @@ impl Sidecar {
         loop {
             if let Some(status) = self.exited() {
                 return Err(format!(
-                    "Сервер Асістента завершився з кодом {status} під час запуску.\n\n{}",
+                    "Сервер Асистента завершився з кодом {status} під час запуску.\n\n{}",
                     self.log_tail(60)
                 ));
             }
@@ -256,7 +256,7 @@ impl Sidecar {
             }
             if Instant::now() >= deadline {
                 return Err(format!(
-                    "Сервер Асістента не відповів за {} с на {}{}.\n\n{}",
+                    "Сервер Асистента не відповів за {} с на {}{}.\n\n{}",
                     STARTUP_TIMEOUT.as_secs(),
                     self.base_url(),
                     url_path,

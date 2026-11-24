@@ -162,7 +162,7 @@ def run_worker(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="app.worker", description="Воркер індексації Асістента"
+        prog="app.worker", description="Воркер індексації Асистента"
     )
     parser.add_argument("--data-dir", default=None, help="Каталог даних застосунку")
     parser.add_argument("--max-jobs", type=int, default=None,

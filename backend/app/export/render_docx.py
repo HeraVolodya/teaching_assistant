@@ -148,7 +148,7 @@ def _table(doc: Any, block: Block) -> None:
     table.autofit = False
     weights = [min(60, max(6, max((len(r[c]) if c < len(r) else 0) for r in all_rows)))
                for c in range(width)]
-    widths = [TEXT_WIDTH_CM * w / sum(weights) for w in weights]
+    widths = _column_widths(weights, all_rows, width)
     for row_index, row in enumerate(all_rows):
         for col_index in range(width):
             cell = table.cell(row_index, col_index)
@@ -175,6 +175,25 @@ def _table(doc: Any, block: Block) -> None:
     repeat.set(qn("w:val"), "true")
     header_row.append(repeat)
     doc.add_paragraph()
+
+
+def _column_widths(weights: list[int], rows: list[list[str]], width: int) -> list[float]:
+    """Ширини стовпців (см): пропорційно обсягу тексту, але не вужче за
+    найдовше слово стовпця — інакше Word ламає слово посередині
+    («фрагментув / ання», «У / по / шу / ку»). Нестачу забирають у ширших стовпців."""
+    widths = [TEXT_WIDTH_CM * w / sum(weights) for w in weights]
+    floors = []
+    for c in range(width):
+        words = [w for row in rows if c < len(row) for w in plain(row[c]).split()]
+        longest = max((len(w) for w in words), default=3)
+        floors.append(min(5.0, 0.5 + 0.24 * longest))       # ~0,24 см на знак при 12 pt
+    if sum(floors) >= TEXT_WIDTH_CM:
+        return [TEXT_WIDTH_CM * f / sum(floors) for f in floors]
+    deficit = sum(max(0.0, f - w) for f, w in zip(floors, widths, strict=True))
+    surplus = [max(0.0, w - f) for f, w in zip(floors, widths, strict=True)]
+    spare = sum(surplus)
+    return [f if w <= f else w - deficit * s / spare
+            for f, w, s in zip(floors, widths, surplus, strict=True)]
 
 
 def _contents(doc: Any, headings: list[str]) -> None:

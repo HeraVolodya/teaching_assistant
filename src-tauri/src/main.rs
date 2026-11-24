@@ -1,7 +1,7 @@
 // Без консольного вікна в release-збірці на Windows.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-//! Оболонка «Асістента».
+//! Оболонка «Асистента».
 //!
 //! **Архітектурний інваріант, який тут захищається:** оболонка володіє лише
 //! вікном, нативними діалогами, «показати в Провіднику/Finder», життєвим циклом
@@ -107,7 +107,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("не вдалося ініціалізувати Асістент")
+        .expect("не вдалося ініціалізувати Асистент")
         .run(|app_handle, event| {
             // Вбити дерево процесів на будь-якому шляху виходу, включно з
             // закриттям останнього вікна й Cmd+Q.
@@ -158,7 +158,7 @@ fn fatal(handle: &tauri::AppHandle, message: &str) {
         .dialog()
         .message(message)
         .kind(MessageDialogKind::Error)
-        .title("Асістент не зміг запуститися")
+        .title("Асистент не зміг запуститися")
         .buttons(MessageDialogButtons::Ok)
         .show(move |_| {
             handle_for_exit.exit(1);

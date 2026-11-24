@@ -431,7 +431,7 @@ def ensure_models_placeholder(resources_dir: Path) -> None:
     readme = models_dir / "README.txt"
     if not readme.exists():
         readme.write_text(
-            "Тека моделей Асістента.\n\n"
+            "Тека моделей Асистента.\n\n"
             "Якщо тут немає manifest.json — постачання виконано у варіанті\n"
             "«моделі на окремому носії». Майстер першого запуску попросить\n"
             "вказати теку моделей і перевірить її контрольні суми.\n"

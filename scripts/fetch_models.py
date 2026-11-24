@@ -463,7 +463,7 @@ def fetch(models_dir: Path, assets: list[ModelAsset], *, force: bool = False, qu
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Завантажити моделі Асістента у пласке дерево.")
+    parser = argparse.ArgumentParser(description="Завантажити моделі Асистента у пласке дерево.")
     parser.add_argument("--models-dir", type=Path, default=Path("assets/models"))
     parser.add_argument("--profile", default="full", choices=PROFILES)
     parser.add_argument("--only", nargs="*", default=[], help="Обмежити конкретними id моделей.")

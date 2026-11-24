@@ -38,7 +38,7 @@ class OutboundNetworkBlocked(RuntimeError):
         target = f"{host}:{port}" if port is not None else host
         super().__init__(
             f"Заблоковано вихідне мережеве з'єднання до {target}. "
-            f"Асістент працює у закритому контурі: дозволені лише {sorted(allowed_hosts())}. "
+            f"Асистент працює у закритому контурі: дозволені лише {sorted(allowed_hosts())}. "
             f"Якщо це LM Studio — перевірте, що він слухає на 127.0.0.1."
         )
         self.host = host

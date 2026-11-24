@@ -6,7 +6,7 @@
  */
 export const uk = {
   app: {
-    name: "Асістент",
+    name: "Асистент",
     subtitle: "Локальний помічник викладача",
     demoBadge: "Демонстраційні дані",
     demoHint:

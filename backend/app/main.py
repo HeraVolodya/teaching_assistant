@@ -1,4 +1,4 @@
-"""FastAPI-застосунок «Асістент»: локальний HTTP API для UI й оболонки.
+"""FastAPI-застосунок «Асистент»: локальний HTTP API для UI й оболонки.
 
 ПЕРШИМ ДІЛОМ — `net_guard.install()`.
 Довіра до продукту тримається на твердженні «жоден навчальний матеріал не
@@ -106,7 +106,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await services.watcher.start()
 
         log.info(
-            "Асістент API готовий: %s:%s, stub=%s, воркер=%s",
+            "Асистент API готовий: %s:%s, stub=%s, воркер=%s",
             resolved.host, resolved.port, resolved.stub, resolved.worker_mode,
         )
         try:
@@ -119,7 +119,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             services.close()
 
     application = FastAPI(
-        title="Асістент — локальний AI-асистент викладача",
+        title="Асистент — локальний AI-асистент викладача",
         version=routes_system.APP_VERSION,
         description=(
             "Локальний API бази знань: приймання документів, гібридний пошук, "

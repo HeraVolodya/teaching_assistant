@@ -166,7 +166,7 @@ const TABLE: Record<string, Omit<ErrorDescription, "code">> = {
   SIDECAR_UNREACHABLE: {
     title: "Немає зв'язку із застосунком",
     explain:
-      "Службова частина «Асістента» не відповідає. Дані на місці — недоступний лише " +
+      "Службова частина «Асистента» не відповідає. Дані на місці — недоступний лише " +
       "процес, який з ними працює.",
     action: "none",
     actionLabel: "",
@@ -231,7 +231,7 @@ export function diagnosticsText(input: {
 }): string {
   const described = describeError(input.code);
   const lines = [
-    "Асістент — діагностика помилки обробки",
+    "Асистент — діагностика помилки обробки",
     `Час: ${(input.at ?? new Date()).toISOString()}`,
     `Версія: ${input.appVersion ?? "невідомо"}`,
     `Платформа: ${input.platform ?? "невідомо"}`,

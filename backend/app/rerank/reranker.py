@@ -434,7 +434,7 @@ class OnnxReranker:
         if not path.is_file():
             raise FileNotFoundError(
                 f"Не знайдено tokenizer.json для реранкера {self._model.id} у {self._dir}. "
-                "Асістент не завантажує моделі з мережі: скопіюйте файли з інсталяційного "
+                "Асистент не завантажує моделі з мережі: скопіюйте файли з інсталяційного "
                 "носія або запустіть у режимі заглушки (ASISTENT_STUB=1)."
             )
         tok = Tokenizer.from_file(str(path))

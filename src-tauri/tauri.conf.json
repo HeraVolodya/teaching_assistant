@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "splash",
-        "title": "Асістент — запуск",
+        "title": "Асистент — запуск",
         "url": "splash.html",
         "width": 460,
         "height": 260,
@@ -26,7 +26,7 @@
       },
       {
         "label": "main",
-        "title": "Асістент",
+        "title": "Асистент",
         "width": 1280,
         "height": 860,
         "minWidth": 1024,
@@ -56,7 +56,7 @@
     ],
     "category": "Education",
     "shortDescription": "Локальний AI-асистент викладача",
-    "longDescription": "Асістент — повністю локальний AI-помічник викладача: приймання навчальних матеріалів, гібридний пошук і відповіді з покликанням на конкретні сторінки. Жодних хмарних сервісів.",
+    "longDescription": "Асистент — повністю локальний AI-помічник викладача: приймання навчальних матеріалів, гібридний пошук і відповіді з покликанням на конкретні сторінки. Жодних хмарних сервісів.",
     "copyright": "© 2026 Національна академія сухопутних військ, Інститут РВіА",
     "resources": {
       "resources/runtime": "runtime",
@@ -74,7 +74,7 @@
         "displayLanguageSelector": false,
         "installerHooks": "nsis/hooks.nsh",
         "compression": "lzma",
-        "startMenuFolder": "Асістент"
+        "startMenuFolder": "Асистент"
       }
     },
     "macOS": {

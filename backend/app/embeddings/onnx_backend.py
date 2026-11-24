@@ -122,7 +122,7 @@ class ModelFilesMissing(FileNotFoundError):
     def __init__(self, model: EmbeddingModel, path: Path, missing: str) -> None:
         super().__init__(
             f"Не знайдено {missing} для embedding-моделі {model.id} у каталозі {path}. "
-            "Асістент працює у закритому контурі й НЕ завантажує моделі з мережі: "
+            "Асистент працює у закритому контурі й НЕ завантажує моделі з мережі: "
             "скопіюйте файли моделі з інсталяційного носія або запустіть застосунок "
             "у режимі заглушки (ASISTENT_STUB=1)."
         )
