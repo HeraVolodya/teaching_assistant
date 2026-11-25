@@ -25,6 +25,11 @@ export interface SourceTarget {
   page: number;
   bboxes: BBoxDto[];
   quote?: string;
+  /**
+   * Цитований фрагмент. PDF підсвічується рамками (`bboxes`), а в тексті й
+   * аркуші таблиці рамок немає — там підсвічується діапазон самого фрагмента.
+   */
+  chunkUid?: string;
 }
 
 interface UiState {

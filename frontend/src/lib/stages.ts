@@ -22,6 +22,8 @@ export interface StageText {
 }
 
 const STAGE_LABELS: Record<string, string> = {
+  // Word / PowerPoint / DjVu зберігаються як PDF, таблиці — як текст.
+  CONVERT: "Перетворюю файл",
   PROBE: "Оцінюю документ",
   PARSE: "Читаю сторінки",
   ENRICH_FIGURES: "Описую рисунки",

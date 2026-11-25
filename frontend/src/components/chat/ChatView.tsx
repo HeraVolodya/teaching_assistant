@@ -634,6 +634,7 @@ function SourceStrip({ citations }: { citations: CitationDto[] }) {
                 page: citation.pageFrom ?? 1,
                 bboxes: citation.bboxes,
                 quote: citation.quote,
+                chunkUid: citation.chunkUid,
               })
             }
             className={cn(

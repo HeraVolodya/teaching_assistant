@@ -398,3 +398,111 @@ def test_cancelled_lease_stops_between_pages(tmp_path) -> None:
     harness.queue.request_cancel(job.id)
     with pytest.raises(JobCancelled):
         lease.checkpoint(stage="PARSE", weight=1.0, force=True)
+
+
+# ------------------------------------------------- Word, Excel, DjVu через копію
+def _add_file(harness: _Harness, name: str, data: bytes) -> Document:
+    document_id = new_id()
+    stored = f"{document_id}{Path(name).suffix.lower()}"
+    path = harness.paths.documents_dir / stored
+    path.write_bytes(data)
+    document = Document(
+        id=document_id, collection_id=harness.collection.id, title=Path(name).stem,
+        original_name=name, stored_path=stored, content_sha256=content_sha256(path),
+    )
+    with harness.db.transaction() as con:
+        DocumentRepo(con).create(document)
+    harness.queue.enqueue(JobType.PARSE, document_id=document_id,
+                          collection_id=harness.collection.id)
+    return document
+
+
+def _real_mode(tmp_path: Path, **overrides: Any) -> _Harness:
+    """Стенд БЕЗ stub-перетворень (але зі stub-ембедером): так перевіряється
+    саме гілка копій, а не заглушка, яка її оминає."""
+    from app.embeddings.provider import create_provider
+
+    harness = _Harness(tmp_path, stub=False, **overrides)
+    harness.runner = JobRunner(
+        harness.db, harness.settings, paths=harness.paths,
+        provider=create_provider(harness.settings.embedding_model, stub=True,
+                                 models_dir=harness.paths.models_dir),
+        emit=lambda t, d: harness.events.append((t, d)),
+    )
+    return harness
+
+
+def _xlsx_bytes() -> bytes:
+    import io
+
+    openpyxl = pytest.importorskip("openpyxl")
+    book = openpyxl.Workbook()
+    book.active.title = "Норми"
+    book.active.append(["Норматив", "Відмінно", "Добре"])
+    book.active.append(["Розгортання гаубиці Д-30", "1 хв 30 с", "1 хв 45 с"])
+    book.active.append(["Згортання гаубиці Д-30", "1 хв 10 с", "1 хв 20 с"])
+    targets = book.create_sheet("Цілі")
+    targets.append(["Ціль", "Дальність, м"])
+    targets.append(["Спостережний пункт противника", "8400"])
+    buffer = io.BytesIO()
+    book.save(buffer)
+    return buffer.getvalue()
+
+
+def test_spreadsheet_is_indexed_sheet_by_sheet(tmp_path) -> None:
+    """Аркуш — це «сторінка» таблиці: цитата має вести на «арк. Норми»,
+    а не на вигадану друковану сторінку, якої в Excel немає."""
+    harness = _Harness(tmp_path)
+    document = _add_file(harness, "Нормативи.xlsx", _xlsx_bytes())
+    harness.drain()
+
+    stored = harness.document(document.id)
+    assert stored.status is DocStatus.READY, stored.error_detail
+    assert stored.page_count == 2
+    with harness.db.connection() as con:
+        labels = [p.page_label for p in PageRepo(con).for_document(document.id)]
+        ids = [r[0] for r in con.execute(
+            "SELECT id FROM chunks WHERE document_id=? AND level='L2'", (document.id,))]
+        leaves = ChunkRepo(con).by_ids(ids)
+    assert labels == ["арк. Норми", "арк. Цілі"]
+    assert {c.citation_label() for c in leaves} == {"арк. Норми", "арк. Цілі"}
+    assert any("Відмінно = 1 хв 30 с" in c.display_text for c in leaves)
+    assert (harness.paths.documents_dir / f"{document.id}.view.md").is_file()
+
+
+def test_word_in_stub_mode_never_starts_office(tmp_path, monkeypatch) -> None:
+    import subprocess
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("Office у stub"))
+    harness = _Harness(tmp_path)
+    document = _add_file(harness, "Методичка.docx", b"PK\x03\x04 docx")
+    harness.drain()
+    assert harness.document(document.id).status is DocStatus.READY
+
+
+def test_docx_without_office_gets_honest_approximate_pages(tmp_path, monkeypatch) -> None:
+    from app.ingestion import convert
+
+    body = "\n\n".join(f"Абзац {i}. " + "Текст методичної розробки. " * 12 for i in range(30))
+    monkeypatch.setattr(convert, "_docling_markdown",
+                        lambda src, kind: (f"# Розділ 1\n\n{body}\n", {}, True))
+    harness = _real_mode(tmp_path, converters="none")
+    document = _add_file(harness, "Методичка.docx", b"PK\x03\x04 docx")
+    harness.drain()
+
+    assert harness.document(document.id).status is DocStatus.READY
+    with harness.db.connection() as con:
+        labels = [p.page_label for p in PageRepo(con).for_document(document.id)]
+    assert len(labels) > 1 and all(label.startswith("≈") for label in labels)
+    ready = harness.emitted("doc.ready")
+    assert any("приблизні" in w for w in ready[0]["warnings"])
+
+
+def test_missing_converter_fails_with_code_and_hint(tmp_path) -> None:
+    harness = _real_mode(tmp_path, converters="none")
+    document = _add_file(harness, "Наказ.doc", b"\xd0\xcf\x11\xe0 doc")
+    harness.drain()
+    stored = harness.document(document.id)
+    assert stored.status is DocStatus.FAILED
+    assert stored.error_code == "CONVERTER_MISSING"
+    assert "LibreOffice" in (stored.error_detail or "")

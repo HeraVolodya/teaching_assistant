@@ -349,6 +349,7 @@ SMOKE_ENDPOINTS = (
     "/api/sessions",
     "/api/chat",
     "/api/messages/{message_id}/file",
+    "/api/documents/{document_id}/preview",
 )
 
 # Код самоперевірки — окремою константою, щоб тест пакування звіряв саме те,
@@ -366,7 +367,8 @@ SMOKE_ENDPOINTS = (
 SELF_CHECK_CODE = (
     # docx/pptx/openpyxl — явно: app/export імпортує їх ліниво, тож без цього
     # відсутня бібліотека вилізла б лише на першому «зроби презентацію».
-    "import sys, uvicorn, app.main, docx, pptx, openpyxl; from app import config; "
+    # xlrd — те саме для першої завантаженої таблиці .xls.
+    "import sys, uvicorn, app.main, docx, pptx, openpyxl, xlrd; from app import config; "
     f"expected = {SMOKE_ENDPOINTS!r}; "
     "paths = app.main.app.openapi()['paths']; "
     "missing = [p for p in expected if p not in paths]; "

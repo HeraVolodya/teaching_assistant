@@ -409,7 +409,10 @@ def serialize_table_triplets(
         if not triplets and row_label:
             triplets = [row_label]
         if triplets:
-            lines.append(". ".join(triplets) + ".")
+            # Клітинка-речення вже закінчується крапкою — друга дала б «..».
+            lines.append(" ".join(
+                t if t.endswith((".", "!", "?", "…")) else f"{t}." for t in triplets
+            ))
     if len(rows) - 1 > max_rows:
         lines.append(f"[…ще {len(rows) - 1 - max_rows} рядків таблиці]")
     return "\n".join(lines)
@@ -516,6 +519,15 @@ def _parse_text_source(text: str, opts: ParseOptions, *, source_path: str) -> Pa
                 meta={"language": language},
             ))
         elif line.strip().startswith("|") and line.count("|") >= 2:
+            # Один рядок тексту ВПРИТУЛ над таблицею (без порожнього рядка) —
+            # це її підпис: «Таблиця 3. Норми…» або «Аркуш «Норми», рядки 2–31».
+            # Він іде всередину атомарного блоку таблиці: окремим абзацом
+            # чанкер міг би приліпити його до ПОПЕРЕДНЬОГО фрагмента, і
+            # таблиця лишилася б без назви.
+            caption = ""
+            table_start = line_start
+            if len(buffer) == 1 and len(buffer[0].strip()) <= 200:
+                caption, table_start, buffer = buffer[0].strip(), buffer_start, []
             flush_paragraph()
             block = [line]
             while index + 1 < len(lines) and lines[index + 1].strip().startswith("|"):
@@ -526,10 +538,10 @@ def _parse_text_source(text: str, opts: ParseOptions, *, source_path: str) -> Pa
             counter += 1
             elements.append(ParsedElement(
                 kind=ElementKind.TABLE,
-                text=serialize_table_triplets(grid),
-                page_no=_page_of(line_start, pages), self_ref=f"#/tables/{counter}",
-                char_from=line_start, char_to=offset,
-                meta={"grid": grid, "markdown": "\n".join(block)},
+                text=serialize_table_triplets(grid, caption=caption),
+                page_no=_page_of(table_start, pages), self_ref=f"#/tables/{counter}",
+                char_from=table_start, char_to=offset,
+                meta={"grid": grid, "markdown": "\n".join(block), "caption": caption},
             ))
         elif not line.strip():
             flush_paragraph()
@@ -885,14 +897,18 @@ def _assign_char_spans(elements: list[ParsedElement]) -> tuple[str, list[ParsedE
 
 
 # ------------------------------------------------------------- точка входу
-def parse_document(path: str | Path, opts: ParseOptions | None = None) -> ParsedDocument:
+def parse_document(path: str | Path, opts: ParseOptions | None = None, *,
+                   stub: bool | None = None) -> ParsedDocument:
     """Публічний інтерфейс модуля (див. docs/CONTRACT.md).
 
     Порядок вибору бекенда:
-      * ASISTENT_STUB=1 і файл не текстовий → детермінована заглушка;
+      * ASISTENT_STUB=1 (або `stub=True`) і файл не текстовий → детермінована заглушка;
       * .txt/.md → власний текстовий конвеєр (працює завжди);
       * .pdf і docling доступний → повний конвеєр Docling;
       * .pdf без docling → текстовий шар через pypdfium2, з чесним попередженням.
+
+    Word, Excel, DjVu та інші сюди приходять уже КОПІЄЮ — PDF або Markdown
+    (див. `app.ingestion.convert`); сам цей модуль їх не читає.
     """
     opts = opts or ParseOptions()
     path = Path(path)
@@ -902,7 +918,7 @@ def parse_document(path: str | Path, opts: ParseOptions | None = None) -> Parsed
         return _parse_text_source(path.read_text(encoding="utf-8", errors="replace"),
                                   opts, source_path=str(path))
 
-    if is_stub_mode():
+    if stub if stub is not None else is_stub_mode():
         return _parse_stub(path, opts)
 
     if suffix == ".pdf":
@@ -914,10 +930,8 @@ def parse_document(path: str | Path, opts: ParseOptions | None = None) -> Parsed
 
     raise ValueError(
         f"Непідтримуваний формат файлу: {suffix or path.name}. "
-        f"Підтримуються PDF і текстові файли ({', '.join(sorted(SUPPORTED_TEXT_SUFFIXES))}). "
-        f"DOCX слід спершу конвертувати у PDF через LibreOffice headless: "
-        f"msword_backend Docling НІКОЛИ не створює ProvenanceItem, тобто цитата на "
-        f"сторінку для DOCX неможлива в принципі."
+        f"Цей читач приймає PDF і текст ({', '.join(sorted(SUPPORTED_TEXT_SUFFIXES))}); "
+        f"Word, Excel, DjVu та інші спершу перетворюються на копію в app.ingestion.convert."
     )
 
 

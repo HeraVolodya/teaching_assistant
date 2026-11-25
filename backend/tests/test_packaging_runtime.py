@@ -74,8 +74,8 @@ def test_бібліотеки_файлів_оголошено_і_перевір�
     `app/export` імпортує їх ЛІНИВО, `import app.main` відсутності не помітить —
     тож самоперевірка рантайму імпортує їх явно."""
     declared = _declared(PYPROJECT["project"]["dependencies"])
-    assert {"python-docx", "python-pptx", "openpyxl"} <= declared
-    for module in ("docx", "pptx", "openpyxl"):
+    assert {"python-docx", "python-pptx", "openpyxl", "xlrd"} <= declared
+    for module in ("docx", "pptx", "openpyxl", "xlrd"):
         assert re.search(rf"\b{module}\b", runtime.SELF_CHECK_CODE), module
     assert "/api/messages/{message_id}/file" in runtime.SMOKE_ENDPOINTS
 

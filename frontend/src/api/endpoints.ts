@@ -19,6 +19,7 @@ import type {
   ChatSession,
   DocumentDto,
   DocumentFormat,
+  DocumentPreview,
   HealthStatus,
   IngestMode,
   LmStudioStartResult,
@@ -115,6 +116,13 @@ export const documentJobs = (id: string) =>
 
 /** URL для pdf.js. Байти йдуть через sidecar із підтримкою Range. */
 export const documentFileUrl = (id: string) => transport().url(`/documents/${id}/file`);
+
+/** Чим показати джерело: PDF-переглядачем чи сторінкою тексту / аркушем таблиці. */
+export function documentPreview(id: string, page: number, chunkUid?: string) {
+  const query = new URLSearchParams({ page: String(Math.max(1, page)) });
+  if (chunkUid) query.set("chunk", chunkUid);
+  return api.get<DocumentPreview>(`/documents/${id}/preview?${query.toString()}`);
+}
 
 // -------------------------------------------------------------------- чат
 /**

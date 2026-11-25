@@ -15,6 +15,8 @@ import { useTranslation } from "react-i18next";
 
 import { IconButton } from "@/components/ui/Button";
 import { PdfCitationViewer } from "@/components/source-viewer/PdfCitationViewer";
+import { TextSourceViewer } from "@/components/source-viewer/TextSourceViewer";
+import { useDocumentPreview } from "@/hooks/queries";
 import { useUi } from "@/lib/store";
 
 export function SourcePanel() {
@@ -24,6 +26,10 @@ export function SourcePanel() {
   const setWidth = useUi((state) => state.setSourceWidth);
   const close = useUi((state) => state.closeSource);
   const dragging = useRef(false);
+  // PDF (і PDF-копія Word / PowerPoint / DjVu) — у PDF-переглядач; таблиця,
+  // текст і XML — сторінкою Markdown. Відповідь кешується, тож для тексту
+  // `TextSourceViewer` бере цю саму сторінку без другого запиту.
+  const preview = useDocumentPreview(source?.documentId, source?.page ?? 1, source?.chunkUid);
 
   const onPointerMove = useCallback(
     (event: PointerEvent) => {
@@ -97,7 +103,10 @@ export function SourcePanel() {
         <div className="min-w-0 flex-1">
           <p className="truncate text-[0.8125rem] font-semibold">{source.documentTitle}</p>
           <p className="mt-0.5 text-[0.75rem] subtle">
-            {t("source.page", { page: source.page })} · {t("source.highlight")}
+            {preview.data?.kind === "text"
+              ? preview.data.pageLabel
+              : t("source.page", { page: source.page })}{" "}
+            · {t("source.highlight")}
           </p>
         </div>
         <IconButton title={t("source.close")} onClick={close}>
@@ -111,16 +120,32 @@ export function SourcePanel() {
         </blockquote>
       ) : null}
 
-      <PdfCitationViewer
-        // key за документом і сторінкою: перехід на іншу цитату мусить
-        // повністю переініціалізувати переглядач, інакше він лишається на
-        // старій сторінці з новою підсвіткою.
-        key={`${source.documentId}:${source.page}`}
-        documentId={source.documentId}
-        page={source.page}
-        bboxes={source.bboxes}
-        className="min-h-0 flex-1"
-      />
+      {preview.data?.kind === "text" ? (
+        <TextSourceViewer
+          key={`${source.documentId}:${source.page}:${source.chunkUid ?? ""}`}
+          documentId={source.documentId}
+          page={source.page}
+          chunkUid={source.chunkUid}
+          className="min-h-0 flex-1"
+        />
+      ) : preview.data?.kind === "none" ? (
+        <p className="p-6 text-center text-[0.8125rem] subtle">{t("source.notReady")}</p>
+      ) : preview.data?.kind === "pdf" || preview.isError ? (
+        // Помилка запиту перегляду — не привід не показати PDF: старий
+        // бекенд цього маршруту не має, а PDF-переглядач працює й без нього.
+        <PdfCitationViewer
+          // key за документом і сторінкою: перехід на іншу цитату мусить
+          // повністю переініціалізувати переглядач, інакше він лишається на
+          // старій сторінці з новою підсвіткою.
+          key={`${source.documentId}:${source.page}`}
+          documentId={source.documentId}
+          page={source.page}
+          bboxes={source.bboxes}
+          className="min-h-0 flex-1"
+        />
+      ) : (
+        <p className="py-12 text-center text-[0.8125rem] subtle">{t("source.loading")}</p>
+      )}
     </aside>
   );
 }

@@ -42,6 +42,8 @@ from app.api.schemas import (
 from app.api.state import Services
 from app.db.repositories import ChunkRepo, CollectionRepo, DocumentRepo, JobRepo, PageRepo
 from app.domain import DocStatus, Document, IngestMode, JobType, new_id
+from app.ingestion.convert import remove_renditions, view_file
+from app.ingestion.formats import ACCEPTED_SUFFIXES, accepted_label
 from app.jobs.pipeline import resolve_document_path
 
 __all__ = ["router"]
@@ -50,11 +52,11 @@ log = logging.getLogger("asistent.api.documents")
 
 router = APIRouter(tags=["documents"])
 
-# Формати, які конвеєр справді вміє прийняти. DOCX свідомо відсутній:
-# `msword_backend` Docling НІКОЛИ не створює `ProvenanceItem`, тобто цитата на
-# сторінку для DOCX неможлива в принципі, а тихо прийняти файл і потім не
-# вміти на нього послатися — гірше, ніж відмовити одразу з поясненням.
-ALLOWED_SUFFIXES = {".pdf", ".txt", ".md", ".markdown"}
+# Формати, які конвеєр справді вміє прийняти. Word, PowerPoint і DjVu
+# читаються через PDF-копію (сторінки й підсвітка цитати працюють), таблиці
+# Excel/CSV і XML — через Markdown-копію (цитата веде на аркуш). Див.
+# `app.ingestion.formats`.
+ALLOWED_SUFFIXES = ACCEPTED_SUFFIXES
 _RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
 _UNSAFE_NAME_RE = re.compile(r"[\x00-\x1f/\\]")
 
@@ -170,9 +172,7 @@ async def _store_upload(
             status_code=415,
             detail=(
                 f"Формат {suffix or '(без розширення)'} не підтримується. "
-                f"Підтримуються: {', '.join(sorted(ALLOWED_SUFFIXES))}. "
-                "DOCX слід спершу конвертувати у PDF: інакше цитата на конкретну "
-                "сторінку неможлива в принципі."
+                f"Підтримуються {accepted_label()}."
             ),
         )
 
@@ -259,6 +259,7 @@ def delete_document(request: Request, document_id: str) -> None:
         path.unlink(missing_ok=True)
     except OSError as exc:  # pragma: no cover — файл зайнятий читачем на Windows
         log.warning("Не вдалося видалити файл %s: %s", path, exc)
+    remove_renditions(path.parent, path.stem)
     services.queue.enqueue_once(JobType.INDEX, collection_id=document.collection_id)
 
 
@@ -334,6 +335,66 @@ def document_jobs(request: Request, document_id: str) -> list[dict[str, Any]]:
     return jobs
 
 
+# ------------------------------------------------------- перегляд джерела
+@router.get("/documents/{document_id}/preview")
+def document_preview(
+    request: Request,
+    document_id: str,
+    page: int = Query(default=1, ge=1),
+    chunk: str | None = Query(default=None, max_length=64),
+) -> dict[str, Any]:
+    """Що показати в панелі джерела.
+
+    `{"kind": "pdf"}` — відкрити `/file` у PDF-переглядачі (PDF, Word,
+    PowerPoint, DjVu). Для тексту, таблиць і XML — сама «сторінка» (для
+    таблиці це аркуш) у Markdown і діапазон цитованого фрагмента в ній:
+    переглядач PDF такий файл відкрити не може, а показати його треба.
+    """
+    services = services_of(request)
+    document = _get_document(services, document_id)
+    path = resolve_document_path(services.paths, document)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Файл документа відсутній на диску.")
+    view = view_file(path.parent, path)
+    if view is None:
+        return {
+            "kind": "none",
+            "detail": "Копію для перегляду ще не створено — дочекайтеся завершення обробки.",
+        }
+    file, kind = view
+    if kind == "pdf":
+        return {"kind": "pdf"}
+
+    with services.db.connection() as con:
+        pages = PageRepo(con).for_document(document_id)
+        span = None
+        if chunk:
+            span = con.execute(
+                "SELECT char_from, char_to FROM chunks WHERE chunk_uid=? AND document_id=?",
+                (chunk, document_id),
+            ).fetchone()
+    text = file.read_text(encoding="utf-8", errors="replace")
+    total = max(1, len(pages))
+    page = min(page, total)
+    info = next((p for p in pages if p.page_number == page), None)
+    start, end = (info.char_from, info.char_to) if info and info.char_to > info.char_from \
+        else (0, len(text))
+    highlight = None
+    if span is not None and span["char_from"] is not None and span["char_to"] is not None:
+        low = max(int(span["char_from"]), start) - start
+        high = min(int(span["char_to"]), end) - start
+        if high > low:
+            highlight = {"from": low, "to": high}
+    return {
+        "kind": "text",
+        "page": page,
+        "pageCount": total,
+        "pageLabel": (info.page_label if info else None) or str(page),
+        "text": text[start:end],
+        "highlight": highlight,
+    }
+
+
 # ------------------------------------------------------------ віддача файлу
 @router.get("/documents/{document_id}/file")
 def document_file(
@@ -347,12 +408,21 @@ def document_file(
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Файл документа відсутній на диску.")
 
+    name = document.original_name
+    if not download:
+        # Переглядачу — PDF-копію Word / PowerPoint / DjVu: саме на її сторінки
+        # і рамки посилаються цитати. Завантаження — завжди оригінал.
+        view = view_file(path.parent, path)
+        if view is not None and view[1] == "pdf" and view[0] != path:
+            path = view[0]
+            name = f"{Path(document.original_name).stem}.pdf"
+
     size = path.stat().st_size
-    media_type = mimetypes.guess_type(document.original_name)[0] or "application/octet-stream"
+    media_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
     disposition = "attachment" if download else "inline"
     # RFC 5987: кирилична назва в `filename=` ламає заголовок; `filename*` —
     # єдиний спосіб віддати «Настанова.pdf» так, щоб браузер її прочитав.
-    quoted = _rfc5987(document.original_name)
+    quoted = _rfc5987(name)
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Disposition": f"{disposition}; filename*=UTF-8''{quoted}",

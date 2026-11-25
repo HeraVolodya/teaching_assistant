@@ -23,6 +23,7 @@ import { Badge, EmptyState, Input, Toggle } from "@/components/ui/Primitives";
 import { useDocumentPages, useDocuments } from "@/hooks/queries";
 import { cn } from "@/lib/cn";
 import { formatNumber, formatScore } from "@/lib/format";
+import { pageUnit } from "@/lib/formats";
 import { useUi } from "@/lib/store";
 
 export function LibraryScreen({ collectionId }: { collectionId: string | undefined }) {
@@ -127,7 +128,7 @@ export function LibraryScreen({ collectionId }: { collectionId: string | undefin
                 <div className="min-w-0">
                   <h2 className="truncate text-[0.9375rem] font-semibold">{document_.title}</h2>
                   <p className="mt-0.5 text-[0.75rem] tabular-nums subtle">
-                    {formatNumber(document_.pageCount)} с. ·{" "}
+                    {formatNumber(document_.pageCount)} {pageUnit(document_.originalName)} ·{" "}
                     {formatNumber(document_.chunks)} фрагм. · {document_.language.toUpperCase()}
                   </p>
                 </div>

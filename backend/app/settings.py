@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     # Індексація за замовчуванням на CPU: GPU вже зайнято LM Studio, і
     # конкуренція за VRAM дає OOM саме на завантаженні LLM.
     ingest_device: Literal["cpu", "cuda", "mps"] = "cpu"
+    # Чим перетворювати Word / PowerPoint / ODS на PDF чи XLSX перед читанням
+    # (`ASISTENT_CONVERTERS`): auto — Microsoft Office, а як його немає —
+    # LibreOffice; none — жодних сторонніх програм (DOCX/PPTX тоді читаються
+    # без верстки, DOC/RTF/PPT/DjVu відхиляються з поясненням).
+    converters: Literal["auto", "office", "libreoffice", "none"] = "auto"
 
     # --- SSE -----------------------------------------------------------
     # Кільцевий буфер подій для Last-Event-ID. 512 подій ≈ хвилина активної
@@ -139,6 +144,7 @@ class Settings(BaseSettings):
             "worker_recycle_after": self.worker_recycle_after,
             "default_ingest_mode": self.default_ingest_mode.value,
             "ingest_device": self.ingest_device,
+            "converters": self.converters,
             "context_tokens": self.context_tokens,
             "llm_reasoning": self.llm_reasoning,
             "warmup": self.warmup,

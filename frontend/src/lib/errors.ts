@@ -127,11 +127,38 @@ const TABLE: Record<string, Omit<ErrorDescription, "code">> = {
   UNSUPPORTED_FORMAT: {
     title: "Формат не підтримується",
     explain:
-      "Приймаються PDF, TXT і Markdown. Файли Word свідомо не приймаються: у них немає " +
-      "сторінок як таких, тож послатися на конкретну сторінку було б неможливо.",
+      "Приймаються PDF, Word (DOC, DOCX, RTF, ODT), PowerPoint (PPT, PPTX), DjVu, " +
+      "Excel (XLS, XLSX, CSV, ODS), XML, TXT і Markdown.",
     action: "remove",
     actionLabel: "Прибрати рядок",
-    hint: "Збережіть документ як PDF — і посилання на сторінки працюватимуть.",
+    hint: "Збережіть документ як PDF, DOCX або XLSX і завантажте ще раз.",
+  },
+  CONVERTER_MISSING: {
+    title: "Немає програми, щоб відкрити цей файл",
+    explain:
+      "Word, PowerPoint і DjVu застосунок спершу зберігає як PDF — так у цитатах з'являються " +
+      "справжні номери сторінок. Для цього потрібна програма, якої на комп'ютері не знайшлося.",
+    action: "remove",
+    actionLabel: "Прибрати рядок",
+    hint:
+      "Для Word і PowerPoint встановіть Microsoft Office або безкоштовний LibreOffice, для DjVu — " +
+      "DjVuLibre. Або збережіть файл як PDF самостійно й завантажте його.",
+  },
+  CONVERT_FAILED: {
+    title: "Не вдалося перетворити файл",
+    explain:
+      "Програма, якою застосунок зберігає документ як PDF, повідомила про помилку або не " +
+      "відповіла. Найчастіше файл пошкоджений або відкритий в іншій програмі з блокуванням.",
+    action: "retry",
+    actionLabel: "Спробувати ще раз",
+    hint: "Відкрийте файл у Word чи PowerPoint, збережіть як PDF і завантажте PDF.",
+  },
+  OFFICE_ENCRYPTED: {
+    title: "Файл захищено паролем",
+    explain: "Документ Word, Excel чи PowerPoint зашифровано — без пароля його не прочитати.",
+    action: "remove",
+    actionLabel: "Прибрати рядок",
+    hint: "Зніміть пароль у самій програмі (Файл → Відомості → Захист), збережіть і завантажте ще раз.",
   },
   CANCELLED: {
     title: "Обробку скасовано",

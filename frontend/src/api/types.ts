@@ -42,6 +42,7 @@ export type OcrModeName = "DEFAULT" | "FULL_PAGE" | "LAYOUT_REGIONS" | "NONE";
 
 /** Етапи конвеєра — рівно ті рядки, що їх шле `lease.checkpoint(stage=…)`. */
 export type JobStage =
+  | "CONVERT"
   | "PROBE"
   | "PARSE"
   | "ENRICH_FIGURES"
@@ -66,6 +67,9 @@ export type IngestErrorCode =
   | "PARSE_FAILED"
   | "OUT_OF_MEMORY"
   | "UNSUPPORTED_FORMAT"
+  | "CONVERTER_MISSING"
+  | "CONVERT_FAILED"
+  | "OFFICE_ENCRYPTED"
   | "CANCELLED"
   | "UNEXPECTED"
   | "EMBEDDER_MISSING"
@@ -175,6 +179,25 @@ export interface DocumentDto {
   chunks: number;
   job: JobSummary | null;
 }
+
+/**
+ * `GET /documents/{id}/preview` — що показати в панелі джерела.
+ *
+ * `pdf` — PDF-переглядач (PDF, а також PDF-копія Word / PowerPoint / DjVu).
+ * `text` — сторінка тексту чи аркуш таблиці в Markdown із діапазоном
+ * цитованого фрагмента всередині `text`. `none` — копію ще не створено.
+ */
+export type DocumentPreview =
+  | { kind: "pdf" }
+  | { kind: "none"; detail: string }
+  | {
+      kind: "text";
+      page: number;
+      pageCount: number;
+      pageLabel: string;
+      text: string;
+      highlight: { from: number; to: number } | null;
+    };
 
 export interface JobSummary {
   id: string;

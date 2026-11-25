@@ -171,10 +171,16 @@ def ingest_document(
     ingest_mode: IngestMode | None = None,
     device: str = "cpu",
     emit: EmitFn | None = None,
+    converters: str = "auto",
+    stub: bool | None = None,
 ) -> IngestReport:
     """Повний конвеєр одного документа. Кидає `JobCancelled` при скасуванні."""
     emit = emit or _noop
     started = time.perf_counter()
+    if stub is None:
+        from app.ingestion.docling_pipeline import is_stub_mode
+
+        stub = is_stub_mode()
 
     with db.connection() as con:
         document = DocumentRepo(con).get(document_id)
@@ -196,10 +202,17 @@ def ingest_document(
     mode = ingest_mode or document.ingest_mode
     report = IngestReport(document_id=document_id)
 
-    # ---------------------------------------------------------- 0. PROBE
+    # ------------------------------------------------------- 0. CONVERT
+    # Word / PowerPoint / DjVu → PDF-копія, таблиці й XML → Markdown-копія.
+    # Далі конвеєр читає КОПІЮ: для нього це звичайний PDF чи текст.
     _set_status(db, document_id, DocStatus.PROBING)
+    rendition = _rendition(document, path, paths, lease, converters=converters, stub=stub)
+    source = rendition.path
+    report.warnings.extend(rendition.warnings)
+
+    # ---------------------------------------------------------- 0. PROBE
     lease.checkpoint(stage="PROBE", force=True)
-    probe = _probe(path)
+    probe = _probe(source, stub_copy=rendition.tool == "stub")
     report.pages = probe.page_count
     report.warnings.extend(probe.warnings)
 
@@ -214,7 +227,7 @@ def ingest_document(
 
     # ------------------------------------------- 0.5 кеш за хешем контенту
     opts = _parse_options(document, mode, device, lease)
-    profile_hash = _profile_hash(opts, path)
+    profile_hash = _profile_hash(opts, source, rendition)
     cached = _find_cached(db, document, profile_hash)
     if cached is not None:
         reused = reuse_cached_document(db, source=cached, target=document)
@@ -230,8 +243,9 @@ def ingest_document(
     # ---------------------------------------------------------- 1. PARSE
     _set_status(db, document_id, DocStatus.PARSING)
     lease.checkpoint(stage="PARSE", force=True)
-    parsed = _parse(path, opts, lease)
-    report.backend = parsed.backend
+    parsed = _parse(source, opts, lease, stub=rendition.tool == "stub")
+    _apply_rendition_labels(parsed, rendition)
+    report.backend = f"{rendition.tool}→{parsed.backend}" if rendition.is_copy else parsed.backend
     report.warnings.extend(parsed.warnings)
     if lease.is_cancelled():
         raise JobCancelled(lease.job.id)
@@ -313,9 +327,62 @@ def ingest_document(
 
 
 # ---------------------------------------------------------------- складові
-def _probe(path: Path) -> Any:
+def _rendition(document: Document, path: Path, paths: Paths, lease: Lease, *,
+               converters: str, stub: bool) -> Any:
+    """Копія для читання (див. `app.ingestion.convert`). Помилки — з кодом для UI."""
+    from app.ingestion.convert import ConversionCancelled, ConversionError, prepare_rendition
+    from app.ingestion.formats import source_kind
+
+    kind = source_kind(path)
+    if kind not in (None, "pdf", "text"):
+        lease.checkpoint(stage="CONVERT", force=True)
+    try:
+        return prepare_rendition(
+            path,
+            documents_dir=paths.documents_dir,
+            converters=converters if converters in ("auto", "office", "libreoffice", "none")
+            else "auto",  # type: ignore[arg-type]
+            stub=stub,
+            cancel=lease.poll_cancel,
+            profile_dir=paths.cache_dir / "libreoffice-profile",
+            title=document.title,
+        )
+    except ConversionCancelled as exc:
+        raise JobCancelled(lease.job.id) from exc
+    except ConversionError as exc:
+        raise PipelineError(exc.code, str(exc), exc.hint) from exc
+
+
+def _apply_rendition_labels(parsed: Any, rendition: Any) -> None:
+    """Мітки «сторінок», яких немає в самому PDF/тексті копії.
+
+    Аркуш Excel — «арк. Норми», слайд — «слайд 5», а сторінка DOCX, прочитаного
+    без верстки, — «≈3»: так цитата не обіцяє точності, якої немає.
+    """
+    from app.ingestion.page_labels import PageLabelMap
+
+    numbers = [p.page_number for p in parsed.pages]
+    labels: dict[int, str] = {}
+    if rendition.page_labels and len(rendition.page_labels) == len(numbers):
+        labels = {n: rendition.page_labels.get(n, str(n)) for n in numbers}
+    elif rendition.kind == "slides":
+        labels = {n: f"слайд {n}" for n in numbers}
+    elif rendition.approximate_pages:
+        labels = {n: f"≈{n}" for n in numbers}
+    if not labels:
+        return
+    parsed.page_labels = PageLabelMap(labels=labels, source="physical", confidence=1.0)
+    for page in parsed.pages:
+        page.page_label = labels.get(page.page_number, page.page_label)
+
+
+def _probe(path: Path, *, stub_copy: bool = False) -> Any:
     from app.ingestion.probe import probe_pdf, probe_text
 
+    if stub_copy:
+        # Stub не перетворює Word на PDF, а бінарний DOCX як «текст» дав би
+        # тисячі сторінок сміття. Одна порожня сторінка — чесна заглушка.
+        return probe_text("", source_path=str(path))
     if path.suffix.lower() == ".pdf":
         return probe_pdf(path)
     return probe_text(
@@ -342,18 +409,24 @@ def _parse_options(document: Document, mode: IngestMode, device: str, lease: Lea
     )
 
 
-def _profile_hash(opts: Any, path: Path) -> str:
+def _profile_hash(opts: Any, path: Path, rendition: Any = None) -> str:
     from app.ingestion.docling_pipeline import build_parse_profile, parse_profile_hash
 
     backend = "docling" if path.suffix.lower() == ".pdf" else "text"
-    return parse_profile_hash(build_parse_profile(opts, backend=backend))
+    profile = build_parse_profile(opts, backend=backend)
+    # Копія входить у ключ кешу: той самий DOCX, перетворений Word і
+    # LibreOffice, має РІЗНІ сторінки, і чанки одного не можна віддати іншому.
+    # Для PDF і тексту ключ лишається тим самим, що й до появи копій.
+    if rendition is not None and rendition.is_copy:
+        profile["source"] = rendition.profile()
+    return parse_profile_hash(profile)
 
 
-def _parse(path: Path, opts: Any, lease: Lease) -> Any:
+def _parse(path: Path, opts: Any, lease: Lease, *, stub: bool = False) -> Any:
     from app.ingestion.docling_pipeline import parse_document
 
     try:
-        return parse_document(path, opts)
+        return parse_document(path, opts, stub=stub or None)
     except ValueError as exc:
         raise PipelineError("UNSUPPORTED_FORMAT", str(exc),
                             "Конвертуйте файл у PDF і завантажте ще раз.") from exc

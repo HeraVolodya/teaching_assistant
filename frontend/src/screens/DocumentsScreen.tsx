@@ -36,10 +36,9 @@ import { useLive } from "@/hooks/useAppEvents";
 import { cn } from "@/lib/cn";
 import { describeError, diagnosticsText } from "@/lib/errors";
 import { formatBytes, formatDuration, formatNumber } from "@/lib/format";
+import { ACCEPT_ATTRIBUTE, pageUnit, splitAccepted } from "@/lib/formats";
 import { describeStage, isPendingStatus } from "@/lib/stages";
 import { useUi } from "@/lib/store";
-
-const ACCEPTED = ".pdf,.txt,.md,.markdown";
 
 export function DocumentsScreen({ collectionId }: { collectionId: string | undefined }) {
   const { t } = useTranslation();
@@ -47,6 +46,9 @@ export function DocumentsScreen({ collectionId }: { collectionId: string | undef
   const upload = useUploadDocuments(collectionId);
   const [dragging, setDragging] = useState(false);
   const [mode, setMode] = useState<IngestMode>("FAST");
+  // Відкинуті файли НАЗИВАЮТЬСЯ: раніше екран мовчки пропускав усе, крім
+  // PDF і тексту, і викладач, що перетягнув DOCX, бачив лише «нічого не сталося».
+  const [rejected, setRejected] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const lastReady = useLive((state) => state.lastReady);
   const dismissReady = useLive((state) => state.dismissReady);
@@ -54,8 +56,9 @@ export function DocumentsScreen({ collectionId }: { collectionId: string | undef
   const addFiles = useCallback(
     (files: FileList | File[] | null) => {
       if (!files || !collectionId) return;
-      const list = [...files].filter((file) => /\.(pdf|txt|md|markdown)$/i.test(file.name));
-      if (list.length) upload.mutate({ files: list, meta: { ingestMode: mode } });
+      const { accepted, rejected: skipped } = splitAccepted([...files]);
+      setRejected(skipped);
+      if (accepted.length) upload.mutate({ files: accepted, meta: { ingestMode: mode } });
     },
     [collectionId, mode, upload],
   );
@@ -118,7 +121,7 @@ export function DocumentsScreen({ collectionId }: { collectionId: string | undef
               ref={inputRef}
               type="file"
               multiple
-              accept={ACCEPTED}
+              accept={ACCEPT_ATTRIBUTE}
               className="hidden"
               onChange={(event) => {
                 addFiles(event.target.files);
@@ -129,6 +132,20 @@ export function DocumentsScreen({ collectionId }: { collectionId: string | undef
         </header>
 
         {lastReady ? <ReadyBanner onDismiss={dismissReady} ready={lastReady} /> : null}
+
+        {rejected.length ? (
+          <div className="mb-3">
+            <Banner
+              tone="warn"
+              title={t("documents.rejected", { list: rejected.join(", ") })}
+              action={
+                <Button size="sm" onClick={() => setRejected([])}>
+                  {t("documents.readyDismiss")}
+                </Button>
+              }
+            />
+          </div>
+        ) : null}
 
         {isLoading ? (
           <div className="space-y-2">
@@ -218,7 +235,11 @@ function DocumentRow({
         <p className="truncate text-[0.8125rem] font-medium">{document.title}</p>
         <p className="mt-0.5 flex flex-wrap gap-x-2 text-[0.6875rem] tabular-nums subtle">
           <span>{document.docType}</span>
-          {document.pageCount ? <span>{formatNumber(document.pageCount)} с.</span> : null}
+          {document.pageCount ? (
+            <span>
+              {formatNumber(document.pageCount)} {pageUnit(document.originalName)}
+            </span>
+          ) : null}
           {document.sizeBytes ? <span>{formatBytes(document.sizeBytes)}</span> : null}
           {document.chunks ? <span>{formatNumber(document.chunks)} фрагм.</span> : null}
         </p>

@@ -19,12 +19,13 @@
 
 | Модуль | Каталог | Публічний інтерфейс |
 |---|---|---|
-| приймання | `backend/app/ingestion/` | `parse_document(path, opts) -> ParsedDocument`, `chunk_document(parsed, cfg) -> list[Chunk]`, `normalize_uk(text) -> str`, `lemmatize(tokens, lang) -> LemmaStream` |
+| приймання | `backend/app/ingestion/` | `parse_document(path, opts) -> ParsedDocument`, `chunk_document(parsed, cfg) -> list[Chunk]`, `normalize_uk(text) -> str`, `lemmatize(tokens, lang) -> LemmaStream`; `prepare_rendition(original, documents_dir=…) -> Rendition` — Word / PowerPoint / DjVu → `<id>.view.pdf` (Office COM через PowerShell, LibreOffice, ddjvu), Excel / CSV / XML → `<id>.view.md` (аркуш = сторінка, мітка «арк. …»). Перелік форматів — `formats.ACCEPTED_SUFFIXES` (дзеркало: `frontend/src/lib/formats.ts`) |
 | ембединги | `backend/app/embeddings/` | `EmbeddingProvider.embed_queries(list[str]) -> np.ndarray`, `.embed_documents(list[str]) -> np.ndarray`, `run_selftest() -> SelfTestReport` |
 | реранкінг | `backend/app/rerank/` | `Reranker.score(query, list[str]) -> list[float]` |
 | пошук | `backend/app/retrieval/` | `VectorIndex` (build/search/mmap), `HybridRetriever.retrieve(query, cfg) -> tuple[list[RetrievedChunk], RetrievalDebug]` |
 | LLM | `backend/app/backends/` | `LlmBackend` (`chat_stream`, `health`, `load_model`, `list_models`), `probe_hardware() -> Hardware`, `recommend_model(hw) -> ModelSpec` |
-| генерація | `backend/app/generation/` | `build_prompt(...) -> Messages`, `parse_citations(text, mapping) -> tuple[str, list[Citation], list[str]]`, `Generator.answer(...) -> AsyncIterator[AnswerChunk]` |
+| генерація | `backend/app/generation/` | `build_prompt(...) -> Messages`, `parse_citations(text, mapping) -> tuple[str, list[Citation], list[str]]`, `Generator.answer(..., task=AnswerTask) -> AsyncIterator[AnswerChunk]` |
+| файли (pptx/docx/xlsx) | `backend/app/export/` | `detect_document_request(text) -> DocumentRequest` або `None`, `document_task(request) -> AnswerTask`, `parse_markdown(text) -> Outline`, `render_document(outline, fmt, sources) -> RenderedFile`, `render_message(con, message_id, fmt) -> RenderedFile`. python-docx / python-pptx / openpyxl — лише лінивим імпортом (правило 1) |
 | API + воркер | `backend/app/api/`, `backend/app/jobs/`, `backend/app/main.py` | FastAPI-застосунок, SSE, цикл воркера |
 | оцінювання | `backend/app/eval/`, `backend/scripts/` | `run_retrieval_eval(...) -> Metrics`, скрипт OCR-бейк-офу |
 
@@ -34,6 +35,9 @@
    1.5–4 с на Windows; в API це означає 6+ секунд до чутливості. Тільки воркер.
 2. **Ембедер і реранкер — прямі сесії ONNX Runtime.** Не `sentence-transformers`
    (жорстко вимагає torch навіть із `backend="onnx"`), не `fastembed` (немає Qwen3).
+   Виняток з 11/2026: типово кандидатів переоцінює мовна модель LM Studio одним
+   listwise-запитом (`rerank/llm_reranker.py`, ~3–4 с на GPU проти ~80 с CPU-крос-енкодера);
+   ONNX-крос-енкодер лишається запасним шляхом і режимом `ASISTENT_RERANK_WITH=onnx`.
 3. **Усе має працювати без моделей.** Обов'язковий stub-режим (`ASISTENT_STUB=1`):
    детерміновані псевдовектори з хешу, ехо-LLM. Це патерн `LLAMA_CPP_STUB` із
    on-device POC NeoLens, і саме він дозволяє ганяти весь UI і CI без 1.5 ГБ моделей.

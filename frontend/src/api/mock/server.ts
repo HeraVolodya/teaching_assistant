@@ -503,6 +503,39 @@ route("GET", /^\/documents\/([^/]+)\/pages$/, ({ match }) => {
 
 route("GET", /^\/documents\/([^/]+)\/jobs$/, () => []);
 
+/**
+ * Перегляд джерела. Таблиці, CSV, XML і текст показуються сторінкою
+ * Markdown — як у справжньому бекенді; усе інше відкривається демо-PDF.
+ */
+route("GET", /^\/documents\/([^/]+)\/preview$/, ({ match, query }) => {
+  const document = documentById(match[1]) ?? notFound("Документ");
+  if (!/\.(xlsx|xlsm|xls|csv|ods|xml|txt|md|markdown)$/i.test(document.originalName)) {
+    return { kind: "pdf" };
+  }
+  const page = Math.max(1, Number(query.get("page") ?? 1));
+  const caption = `Аркуш «Норми», рядки 2–4.`;
+  const text = [
+    `# Аркуш «Норми»`,
+    "",
+    caption,
+    "| Норматив | Відмінно | Добре |",
+    "| --- | --- | --- |",
+    "| Розгортання гаубиці Д-30 | 1 хв 30 с | 1 хв 45 с |",
+    "| Згортання гаубиці Д-30 | 1 хв 10 с | 1 хв 20 с |",
+    "| Приведення до бою з ходу | 2 хв | 2 хв 30 с |",
+    "",
+  ].join("\n");
+  const from = text.indexOf(caption);
+  return {
+    kind: "text",
+    page,
+    pageCount: 2,
+    pageLabel: page === 1 ? "арк. Норми" : "арк. Цілі",
+    text,
+    highlight: query.get("chunk") ? { from, to: text.length - 1 } : null,
+  };
+});
+
 // --- чат -----------------------------------------------------------------
 route("GET", /^\/sessions$/, ({ query }) => {
   const assistantId = query.get("assistant_id");

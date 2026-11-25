@@ -345,6 +345,7 @@ export function CitationPill({ citation }: { citation: CitationDto }) {
       page: citation.pageFrom ?? 1,
       bboxes: citation.bboxes,
       quote: citation.quote,
+      chunkUid: citation.chunkUid,
     });
     setOpen(false);
   };

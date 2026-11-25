@@ -147,6 +147,8 @@ class JobRunner:
             provider=self.provider,
             device=self.settings.ingest_device,
             emit=self.emit,
+            converters=self.settings.converters,
+            stub=self.settings.stub,
         )
 
     def _run_index(self, job: ClaimedJob, lease: Lease) -> None:

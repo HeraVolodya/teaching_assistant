@@ -20,6 +20,7 @@ import type {
   AssistantIn,
   ChatSession,
   DocumentDto,
+  DocumentPreview,
   HealthStatus,
   IngestMode,
   PageDto,
@@ -80,6 +81,23 @@ export function useDocumentPages(documentId: string | undefined): UseQueryResult
   return useQuery({
     queryKey: ["document-pages", documentId],
     queryFn: () => api.documentPages(documentId as string),
+    enabled: Boolean(documentId),
+    staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * Як показати джерело. Ключ — документ + сторінка + фрагмент: ту саму
+ * сторінку з іншою цитатою треба підсвітити інакше.
+ */
+export function useDocumentPreview(
+  documentId: string | undefined,
+  page: number,
+  chunkUid?: string,
+): UseQueryResult<DocumentPreview> {
+  return useQuery({
+    queryKey: ["document-preview", documentId, page, chunkUid ?? null],
+    queryFn: () => api.documentPreview(documentId as string, page, chunkUid),
     enabled: Boolean(documentId),
     staleTime: 5 * 60_000,
   });

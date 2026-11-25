@@ -25,7 +25,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 
-from app.domain import Citation, RetrievedChunk
+from app.domain import SPAN_SEPARATOR, Citation, RetrievedChunk, format_page_span, is_self_label
 
 __all__ = [
     "CITATION_RE",
@@ -197,6 +197,11 @@ def merge_page_ranges(citations: Sequence[Citation]) -> list[Citation]:
 def _merged_label(a: Citation, b: Citation, merged_to: int) -> str:
     """Мітка зливка. Друковані мітки важливіші за фізичні індекси: викладач
     шукає «с. 147», надруковану внизу сторінки, а не 152-гу сторінку файлу."""
+    if is_self_label(a.page_label) or is_self_label(b.page_label):
+        # «арк. Норми», «слайд 3 – слайд 4»: межі беруться з самих міток.
+        first = (a.page_label or b.page_label).split(SPAN_SEPARATOR)[0]
+        last = (b.page_label or a.page_label).split(SPAN_SEPARATOR)[-1]
+        return format_page_span(first, last)
     start = a.page_label.replace("с. ", "").split("–")[0].strip() if a.page_label else ""
     end = b.page_label.replace("с. ", "").split("–")[-1].strip() if b.page_label else ""
     if not start:

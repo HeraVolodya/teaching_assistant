@@ -286,14 +286,22 @@ def probe_text(text: str, *, page_chars: int = 1800, source_path: str = "") -> P
     авторитетним, якщо він є; інакше сторінки нарізаються по `page_chars` —
     це наближення, потрібне лише для того, щоб цитата мала якийсь номер.
     """
-    raw_pages = text.split("\f") if "\f" in text else [
+    by_breaks = "\f" in text
+    raw_pages = text.split("\f") if by_breaks else [
         text[i:i + page_chars] for i in range(0, max(len(text), 1), page_chars)
     ]
+    # Розрив у самому кінці файлу (так закінчується кожен аркуш у копії
+    # таблиці й багато txt-експортів) не відкриває нової сторінки.
+    if by_breaks and len(raw_pages) > 1 and not raw_pages[-1].strip():
+        raw_pages.pop()
     report = ProbeReport(source_path=source_path, backend="text")
     cursor = 0
     for index, page_text in enumerate(raw_pages, start=1):
         report.pages.append(measure_page(page_text, page_number=index, char_from=cursor))
-        cursor += len(page_text)
+        # Символ розриву теж займає позицію в тексті. Без «+1» межі сторінок
+        # відставали б на одну позицію за кожен розрив, і на третій сторінці
+        # перший абзац уже потрапляв би на четверту.
+        cursor += len(page_text) + (1 if by_breaks else 0)
     report.page_count = len(report.pages)
     return report
 

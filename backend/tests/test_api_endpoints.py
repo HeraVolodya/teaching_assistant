@@ -121,19 +121,36 @@ async def test_prompt_preview_shows_thresholds_next_to_the_prompt(tmp_path) -> N
 
 
 # --------------------------------------------------------------- документи
-async def test_upload_rejects_docx_with_an_explanation(tmp_path) -> None:
-    """DOCX не має номерів сторінок узагалі: `msword_backend` ніколи не
-    створює `ProvenanceItem`. Тихо прийняти файл і потім не вміти на нього
-    послатись — гірше, ніж відмовити одразу."""
+@pytest.mark.parametrize(
+    "name", ["методичка.docx", "наказ.doc", "лекція.pptx", "підручник.djvu",
+             "норми.xlsx", "норми.xls", "журнал.csv", "каталог.xml"],
+)
+async def test_upload_accepts_office_djvu_and_tables(tmp_path, name) -> None:
+    """Word / PowerPoint / DjVu читаються через PDF-копію, таблиці й XML —
+    через Markdown-копію (`app.ingestion.convert`); на вході їх більше не
+    відхиляють."""
     async with api_client(make_settings(tmp_path)) as (client, _app):
         assistant = await create_assistant(client)
         collection_id = assistant["collections"][0]["id"]
         response = await client.post(
             f"/api/collections/{collection_id}/documents",
-            files={"files": ("методичка.docx", b"PK\x03\x04", "application/octet-stream")},
+            files={"files": (name, b"PK\x03\x04", "application/octet-stream")},
+        )
+    assert response.status_code == 201
+    assert response.json()[0]["originalName"] == name
+
+
+async def test_upload_rejects_unknown_format_with_an_explanation(tmp_path) -> None:
+    async with api_client(make_settings(tmp_path)) as (client, _app):
+        assistant = await create_assistant(client)
+        collection_id = assistant["collections"][0]["id"]
+        response = await client.post(
+            f"/api/collections/{collection_id}/documents",
+            files={"files": ("програма.exe", b"MZ\x90\x00", "application/octet-stream")},
         )
     assert response.status_code == 415
-    assert "PDF" in response.json()["detail"]
+    detail = response.json()["detail"]
+    assert ".exe" in detail and "Word" in detail and "Excel" in detail and "DjVu" in detail
 
 
 async def test_upload_rejects_empty_file(tmp_path) -> None:
@@ -385,3 +402,102 @@ async def test_unknown_ids_are_404_not_500(tmp_path) -> None:
         assert (await client.get(
             "/api/sessions", params={"assistant_id": "невідомий"}
         )).status_code == 404
+
+
+# ----------------------------------------------- копія для перегляду (Word, Excel)
+async def _upload(client, collection_id: str, name: str, data: bytes) -> dict:
+    response = await client.post(
+        f"/api/collections/{collection_id}/documents",
+        files={"files": (name, data, "application/octet-stream")},
+    )
+    response.raise_for_status()
+    return response.json()[0]
+
+
+async def test_viewer_gets_the_pdf_copy_but_download_gives_the_original(tmp_path) -> None:
+    """Цитати посилаються на сторінки PDF-копії — її й показуємо; викладач,
+    що тисне «завантажити», хоче свій DOCX, а не PDF."""
+    async with api_client(make_settings(tmp_path)) as (client, application):
+        assistant = await create_assistant(client)
+        collection_id = assistant["collections"][0]["id"]
+        document = await _upload(client, collection_id, "Методичка.docx", b"PK docx bytes")
+        docs_dir = application.state.services.paths.documents_dir
+        (docs_dir / f"{document['id']}.view.pdf").write_bytes(b"%PDF-1.7 copy")
+
+        shown = await client.get(f"/api/documents/{document['id']}/file")
+        assert shown.content == b"%PDF-1.7 copy"
+        assert shown.headers["content-type"] == "application/pdf"
+        assert "%D0%9C%D0%B5" in shown.headers["content-disposition"]   # «Ме…»
+        assert shown.headers["content-disposition"].endswith(".pdf")
+
+        original = await client.get(f"/api/documents/{document['id']}/file",
+                                    params={"download": "true"})
+        assert original.content == b"PK docx bytes"
+        assert original.headers["content-disposition"].endswith(".docx")
+
+        preview = (await client.get(f"/api/documents/{document['id']}/preview")).json()
+        assert preview == {"kind": "pdf"}
+
+
+async def test_preview_before_conversion_says_so(tmp_path) -> None:
+    async with api_client(make_settings(tmp_path)) as (client, _app):
+        assistant = await create_assistant(client)
+        collection_id = assistant["collections"][0]["id"]
+        document = await _upload(client, collection_id, "Лекція.pptx", b"PK pptx")
+        preview = (await client.get(f"/api/documents/{document['id']}/preview")).json()
+    assert preview["kind"] == "none" and "обробки" in preview["detail"]
+
+
+async def test_preview_of_a_spreadsheet_shows_the_sheet_and_the_cited_rows(tmp_path) -> None:
+    """PDF-переглядач не відкриє таблицю; панель джерела показує сам аркуш
+    і підсвічує рядки, на які послалась відповідь."""
+    import io
+
+    openpyxl = pytest.importorskip("openpyxl")
+    from tests.helpers_api import wait_for_status
+
+    book = openpyxl.Workbook()
+    book.active.title = "Норми"
+    book.active.append(["Норматив", "Відмінно"])
+    book.active.append(["Розгортання гаубиці", "1 хв 30 с"])
+    book.create_sheet("Цілі").append(["Ціль", "Дальність"])
+    book["Цілі"].append(["Спостережний пункт", "8400"])
+    buffer = io.BytesIO()
+    book.save(buffer)
+
+    async with api_client(make_settings(tmp_path, worker_mode="inline")) as (client, application):
+        assistant = await create_assistant(client)
+        collection_id = assistant["collections"][0]["id"]
+        document = await _upload(client, collection_id, "Нормативи.xlsx", buffer.getvalue())
+        ready = await wait_for_status(client, collection_id, document["id"])
+        assert ready["status"] == "READY", ready
+        with application.state.services.db.connection() as con:
+            uid = con.execute(
+                "SELECT chunk_uid FROM chunks WHERE document_id=? AND level='L2'"
+                " AND page_from=2", (document["id"],),
+            ).fetchone()[0]
+
+        preview = (await client.get(
+            f"/api/documents/{document['id']}/preview", params={"page": 2, "chunk": uid},
+        )).json()
+        first = (await client.get(f"/api/documents/{document['id']}/preview")).json()
+
+    assert preview["kind"] == "text"
+    assert (preview["page"], preview["pageCount"], preview["pageLabel"]) == (2, 2, "арк. Цілі")
+    assert "| Спостережний пункт | 8400 |" in preview["text"]
+    assert "Розгортання" not in preview["text"]                  # лише свій аркуш
+    span = preview["highlight"]
+    assert span and "Спостережний пункт" in preview["text"][span["from"]:span["to"]]
+    assert first["pageLabel"] == "арк. Норми" and first["highlight"] is None
+
+
+async def test_delete_removes_the_viewing_copies_too(tmp_path) -> None:
+    async with api_client(make_settings(tmp_path)) as (client, application):
+        assistant = await create_assistant(client)
+        collection_id = assistant["collections"][0]["id"]
+        document = await _upload(client, collection_id, "Наказ.doc", b"\xd0\xcf doc")
+        docs_dir = application.state.services.paths.documents_dir
+        for suffix in (".view.pdf", ".view.json"):
+            (docs_dir / f"{document['id']}{suffix}").write_bytes(b"x")
+        assert (await client.delete(f"/api/documents/{document['id']}")).status_code == 204
+        assert list(docs_dir.iterdir()) == []

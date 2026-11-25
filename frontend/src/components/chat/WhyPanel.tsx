@@ -84,6 +84,7 @@ export function WhyPanel({
                 page: fragment.pageFrom ?? 1,
                 bboxes: fragment.bboxes ?? [],
                 quote: fragment.text?.slice(0, 200),
+                chunkUid: fragment.chunkUid,
               })
             }
             onVote={(verdict) => {

@@ -161,3 +161,29 @@ def test_merge_tolerates_missing_pages() -> None:
     c = Citation(ordinal=1, chunk_uid="u", document_id="d", document_title="Т",
                  page_from=None, page_to=None, page_label="", quote="")
     assert merge_page_ranges([c]) == [c]
+
+
+# ------------------------------------------- аркуші Excel і слайди як «сторінки»
+def test_sheet_and_slide_labels_are_not_prefixed_with_page() -> None:
+    """«с. арк. Норми» викладач прочитав би як помилку."""
+    from app.domain import format_page_span
+
+    assert format_page_span("арк. Норми", "арк. Норми") == "арк. Норми"
+    assert format_page_span("слайд 3", "слайд 5") == "слайд 3 – слайд 5"
+    assert format_page_span("12", "14") == "с. 12–14"
+    assert format_page_span("≈3") == "с. ≈3"
+    assert format_page_span(None) == ""
+
+
+def test_rows_of_the_same_sheet_merge_into_one_sheet_label() -> None:
+    a = make_retrieved(document_id="d", ordinal=1, text="Рядки 2–30.", page_from=2,
+                       page_to=2, label_from="арк. Цілі", label_to="арк. Цілі")
+    b = make_retrieved(document_id="d", ordinal=2, text="Рядки 31–60.", page_from=2,
+                       page_to=2, label_from="арк. Цілі", label_to="арк. Цілі")
+    c = make_retrieved(document_id="d", ordinal=3, text="Рядки 2–9.", page_from=3,
+                       page_to=3, label_from="арк. Норми", label_to="арк. Норми")
+    a.ordinal_in_prompt, b.ordinal_in_prompt, c.ordinal_in_prompt = 1, 2, 3
+    _, citations, _ = parse_citations("[1] [2] [3]", [a, b, c])
+    assert citations[0].page_label == "арк. Цілі"
+    merged = merge_page_ranges(citations)
+    assert [m.page_label for m in merged] == ["арк. Цілі – арк. Норми"]

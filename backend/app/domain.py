@@ -20,6 +20,7 @@ from enum import Enum
 from typing import Any, Literal
 
 __all__ = [
+    "SPAN_SEPARATOR",
     "AnswerChunk",
     "Assistant",
     "AssistantConfig",
@@ -42,6 +43,8 @@ __all__ = [
     "RetrievalDebug",
     "RetrievedChunk",
     "chunk_uid_for",
+    "format_page_span",
+    "is_self_label",
     "new_id",
     "utcnow",
 ]
@@ -49,6 +52,26 @@ __all__ = [
 
 def new_id() -> str:
     return uuid.uuid4().hex
+
+
+# Мітки, що самі називають одиницю: аркуш Excel і слайд. Перед ними «с.» не
+# пишеться — «с. арк. Норми» викладач прочитав би як помилку.
+_SELF_LABEL_PREFIXES = ("арк. ", "слайд ")
+SPAN_SEPARATOR = " – "
+
+
+def is_self_label(label: str | None) -> bool:
+    return bool(label) and str(label).startswith(_SELF_LABEL_PREFIXES)
+
+
+def format_page_span(first: str | None, last: str | None = None) -> str:
+    """«с. 12», «с. 12–14», «арк. Норми», «слайд 3 – слайд 5»."""
+    if not first:
+        return ""
+    last = last or first
+    if is_self_label(first) or is_self_label(last):
+        return first if first == last else f"{first}{SPAN_SEPARATOR}{last}"
+    return f"с. {first}" if first == last else f"с. {first}–{last}"
 
 
 def utcnow() -> str:
@@ -287,9 +310,7 @@ class Chunk:
         """Те, що бачить викладач: друкована мітка, а не фізичний індекс."""
         a = self.page_label_from or (str(self.page_from) if self.page_from else None)
         b = self.page_label_to or (str(self.page_to) if self.page_to else None)
-        if a and b and a != b:
-            return f"с. {a}–{b}"
-        return f"с. {a}" if a else ""
+        return format_page_span(a, b)
 
 
 @dataclass(slots=True)
